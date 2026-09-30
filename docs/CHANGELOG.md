@@ -1,0 +1,87 @@
+# Changelog
+
+## 2026-09-24
+
+- Se creó la documentación inicial del proyecto.
+- Se inspeccionó el entorno WSL.
+- Se evaluaron repositorios reutilizables.
+- Se seleccionó `gosom/google-maps-scraper` para adquisición inicial.
+- Se descartó integrar CRM externo en el MVP inicial.
+- Se descartó validar emails por SMTP en el MVP inicial.
+- Se definió arquitectura mínima.
+- Se definió modelo de datos inicial.
+- Se definieron reglas de contacto.
+- Se creó backlog priorizado por impacto comercial.
+- Se aprobó la fase de planificación.
+- Se definió SQLite como base local del MVP.
+- Se corrigió el primer formato de importación a CSV.
+- Se amplió P0 para cerrar el circuito comercial medible.
+- Se documentaron exportaciones CSV, JSON y snapshot SQLite.
+- Se estableció que P0 no incluye envío automático ni LLM Bridge.
+- Se creó una aplicación Laravel local con SQLite.
+- Se implementó CRUD mínimo de ofertas y campañas.
+- Se implementó importación CSV de leads.
+- Se implementó deduplicación básica.
+- Se implementó scoring determinista básico.
+- Se implementó cola manual de contacto.
+- Se implementó `ContactAttempt`.
+- Se implementó registro y clasificación de respuestas.
+- Se implementó pausa de seguimientos pendientes tras respuesta.
+- Se implementó historial de pipeline.
+- Se implementó registro de propuestas con versiones.
+- Se implementaron métricas básicas del embudo.
+- Se implementaron exportaciones CSV, JSON y snapshot SQLite.
+- Se añadieron tests del circuito P0.
+- Se verificó el circuito manual completo.
+- Se limpió la base SQLite para iniciar el piloto real.
+- Se configuró la oferta `Gestor de consultorio/turnos`.
+- Se configuró la campaña `Piloto P0 salud Argentina`.
+- Se documentó el protocolo del piloto en `docs/PILOT.md`.
+- Se agregó orquestación de `gosom/google-maps-scraper`.
+- Se agregaron queries por campaña y runs de scraping.
+- Se agregó enriquecimiento determinista con señales.
+- Se amplió scoring configurable.
+- Se agregó motor simple de asignación de ofertas.
+- Se agregaron plantillas de mensajes.
+- Se agregó soporte email SMTP con dry-run.
+- Se agregaron follow-ups planificados.
+- Se agregaron experimentos y variantes.
+- Se agregaron métricas segmentadas.
+- Se agregó LLM Bridge con validación JSON.
+- Se completó UI de exclusiones.
+- Se agregó kill switch operativo.
+- Se agregó exportación analítica consolidada.
+- Se ampliaron tests a 12 casos.
+- Se descargó y validó `gosom/google-maps-scraper:latest`.
+- Se confirmó versión `v1.18.1-549e4b5`.
+- Se corrigió el comando real del scraper.
+- Se validó adquisición real con query de psicólogos en Córdoba, Argentina.
+- Se confirmó el flujo scraper -> CSV -> importación -> deduplicación -> enriquecimiento -> scoring -> cola.
+- Se confirmó que no se crearon contactos durante la validación.
+- Se rediseñó la UX alrededor de Campaña y Lead.
+- Se redujo la navegación principal a Inicio, Campañas, Leads y Configuración.
+- Se agregó workspace de campaña con resumen, leads, adquisición, contacto, pipeline, experimentos y métricas.
+- Se agregó capa compartida `LeadFilterService`.
+- Se agregó tabla central de leads con filtros persistentes por query string.
+- Se agregó selección múltiple con acciones masivas.
+- Se agregó exportación contextual de CSV, JSON y `analytics_export.csv`.
+- Se agregó ficha completa de lead con diagnóstico, posibles duplicados, timeline y acciones.
+- Se rediseñó la cola como pantalla diaria de contacto.
+- Se agregó Kanban para oportunidades activas.
+- Se agruparon funciones administrativas en Configuración.
+- Se agregaron tests para filtros, exportación filtrada, seleccionados, workspace, duplicados posibles, acciones masivas y render de pantallas.
+- Se simplificó la creación de campañas.
+- Se cambió `fuente` a selector cerrado.
+- Se ocultaron canal, modo, CTA y follow-ups como decisiones principales.
+- Se fijó `modo` en `manual` mientras no exista mensajería automática real.
+- Se cambió la adquisición real para ejecutar el scraper en segundo plano.
+- Se agregó el comando `scraper:execute` para completar e importar runs.
+- Se recuperó el ScrapeRun #3 que había quedado `running` e importó el CSV generado.
+- Se agregó exportación de teléfonos en una línea separada por comas.
+- La exportación de teléfonos normaliza números argentinos con prefijo `+54`.
+- La exportación de teléfonos reutiliza los filtros actuales de leads.
+- Se mejoró el enriquecimiento de leads sin cambiar criterios ni pesos de scoring.
+- El enriquecimiento ahora detecta canales visibles: WhatsApp, email en web, formularios, Instagram, Facebook y Doctoralia.
+- El enriquecimiento ahora detecta sistemas de turnos conocidos como Calendly, Doctoralia, AgendaPro, TurnosWeb, Bookly y SimplyBook.
+- Se agregaron señales de dependencia manual, complejidad operativa, sitio débil y formato de teléfono.
+- El scoring ya no borra señales de enriquecimiento al recalcular.
