@@ -1,109 +1,26 @@
 @extends('layouts.app')
-
 @section('content')
-<div class="page-head">
-    <div>
-        <h1>Cola de trabajo</h1>
-        <p class="muted">Responde a la pregunta: ¿a quién contacto ahora?</p>
-    </div>
-    <form method="get" action="/contact-queue" class="actions">
-        <select name="campaign">
-            <option value="">Todas las campañas</option>
-            @foreach ($campaigns as $campaignOption)
-                <option value="{{ $campaignOption->id }}" @selected(($campaign?->id ?? null) === $campaignOption->id)>{{ $campaignOption->name }}</option>
-            @endforeach
-        </select>
-        <button>Filtrar</button>
-    </form>
-</div>
-
-@forelse ($leads as $lead)
-    <section>
-        <div class="two-col">
-            <div>
-                <h2><a href="/leads/{{ $lead->id }}">{{ $lead->name }}</a></h2>
-                <p class="muted">{{ $lead->location }} · score {{ $lead->score_total }} · {{ $lead->status }}</p>
-                <div class="actions">
-                    @if ($lead->website_url)<a class="button light" href="{{ $lead->website_url }}" target="_blank" rel="noreferrer">Abrir web</a>@endif
-                    @if ($lead->email)<a class="button light" href="mailto:{{ $lead->email }}">Abrir email</a>@endif
-                    @if ($lead->phone)<a class="button light" href="tel:{{ $lead->phone }}">Abrir teléfono</a>@endif
-                </div>
-
-                <h3>Datos útiles</h3>
-                <div class="grid">
-                    <div class="kpi"><div class="muted">Oferta</div>{{ $lead->suggestedOffer?->name ?? 'Sin oferta' }}</div>
-                    <div class="kpi"><div class="muted">Email</div>{{ $lead->email ?? 'No disponible' }}</div>
-                    <div class="kpi"><div class="muted">Teléfono</div>{{ $lead->phone ?? 'No disponible' }}</div>
-                </div>
-
-                <h3>Señales importantes</h3>
-                @forelse ($lead->signalRows->take(5) as $signal)
-                    <span class="badge">{{ $signal->type }}</span>
-                @empty
-                    <span class="muted">Sin señales registradas.</span>
-                @endforelse
-            </div>
-
-            <div>
-                <h3>Mensaje preparado</h3>
-                @php
-                    $template = $templates->firstWhere('offer_id', $lead->suggested_offer_id) ?? $templates->first();
-                    $businessToken = chr(123).chr(123).'negocio'.chr(125).chr(125);
-                    $ctaToken = chr(123).chr(123).'CTA'.chr(125).chr(125);
-                    $preparedMessage = $template?->body
-                        ? str_replace([$businessToken, $ctaToken], [$lead->name, $lead->primary_cta ?? '¿Te interesa verlo?'], $template->body)
-                        : 'No hay plantilla activa.';
-                @endphp
-                <textarea readonly>{{ $preparedMessage }}</textarea>
-                <div class="actions">
-                    <button type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(this.closest('div').previousElementSibling.value)">Copiar mensaje</button>
-                </div>
-
-                <form method="post" action="/contact-attempts">
-                    @csrf
-                    <input type="hidden" name="lead_id" value="{{ $lead->id }}">
-                    <div class="grid">
-                        <label>Campaña
-                            <select name="campaign_id" required>
-                                @foreach ($campaigns as $campaignOption)
-                                    <option value="{{ $campaignOption->id }}" @selected(($campaign?->id ?? null) === $campaignOption->id)>{{ $campaignOption->name }}</option>
-                                @endforeach
-                            </select>
-                        </label>
-                        <label>Canal<input name="channel" value="{{ $campaign?->channel ?? 'email' }}" required></label>
-                        <label>Paso
-                            <select name="step">
-                                <option value="initial">Contacto inicial</option>
-                                <option value="follow_up_1">Follow-up 1</option>
-                                <option value="follow_up_2">Follow-up 2</option>
-                                <option value="closed">Fin</option>
-                            </select>
-                        </label>
-                        <label>Fecha realizada<input type="datetime-local" name="performed_at" value="{{ now()->format('Y-m-d\TH:i') }}"></label>
-                    </div>
-                    <label>Mensaje enviado<textarea name="message_snapshot">{{ $preparedMessage }}</textarea></label>
-                    <label>Resultado<input name="result" value="contacted"></label>
-                    <button>Marcar contactado</button>
-                </form>
-
-                <div class="actions" style="margin-top: 8px;">
-                    <form method="post" action="/leads/{{ $lead->id }}/status">
-                        @csrf
-                        <input type="hidden" name="status" value="PAUSED">
-                        <input type="hidden" name="reason" value="queue_discarded">
-                        <button class="secondary">Descartar</button>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </section>
-@empty
-    <section><div class="empty">No hay leads en cola. Envía leads a cola desde la vista de leads.</div></section>
-@endforelse
-
-@if ($leads->hasPages())
-    <section>
-        {{ $leads->links() }}
-    </section>
-@endif
+<div class="page-head"><div><span class="eyebrow">Un contacto a la vez</span><h1>Cola de trabajo</h1><p class="muted">Prepará el mensaje, registrá lo realizado y continuá.</p></div><form method="get" action="{{ route('queue') }}" class="actions"><label class="sr-only" for="queue-campaign">Filtrar por campaña</label><select id="queue-campaign" name="campaign" style="width:auto;margin:0"><option value="">Todas las campañas</option>@foreach($campaigns as $option)<option value="{{ $option->id }}" @selected($campaign?->id===$option->id)>{{ $option->name }}</option>@endforeach</select><button class="light">Filtrar</button></form></div>
+@forelse($leads as $lead)
+@php
+    $work=$prepared[$lead->id]; $context=$work['campaign']; $pending=$work['pending']; $message=$work['message'];
+    $last=$lead->contactAttempts->where('campaign_id',$context?->id)->where('dry_run',false)->where('status','sent')->sortByDesc('performed_at')->first();
+@endphp
+<div class="section-head"><span class="queue-counter">{{ $leads->firstItem() }} de {{ $leads->total() }} prospectos listos en esta vista</span><a href="{{ route('leads.show',$lead) }}">Ver ficha completa @include('sales.partials.icon',['name'=>'arrow'])</a></div>
+<section class="work-card" data-work-card><div class="work-card-head"><div><h2>{{ $lead->name }}</h2><p class="muted">{{ $lead->city ?: $lead->location }}@if($lead->contact_person) · {{ $lead->contact_person }} @endif</p></div><div class="work-badge-row"><span class="badge blue">{{ $pending ? 'Seguimiento' : 'Contacto inicial' }}</span><span class="badge">Prioridad {{ $lead->score_total }}</span></div></div>
+<div class="work-card-content"><div class="work-context"><span class="eyebrow">Contexto del contacto</span><h3>{{ $context?->name ?? 'Seleccioná una campaña' }}</h3><p class="muted">Último contacto: @dateDisplay($last?->performed_at)</p>@if($pending)<p class="muted">Vencimiento: @dateDisplay($pending->due_at)</p>@endif
+<div class="contact-pills">@if($lead->email)<button type="button" data-copy="{{ $lead->email }}" class="light">@include('sales.partials.icon',['name'=>'copy']) Copiar email</button><a class="button light" href="mailto:{{ $lead->email }}">@include('sales.partials.icon',['name'=>'mail']) Abrir email</a>@endif @if($lead->phone)<button type="button" class="light" data-copy="{{ $lead->phone }}">@include('sales.partials.icon',['name'=>'copy']) Copiar teléfono</button><a class="button light" href="tel:{{ $lead->phone }}">@include('sales.partials.icon',['name'=>'phone']) Llamar</a>@endif @if($lead->website_url)<a class="button light" href="{{ $lead->website_url }}" target="_blank" rel="noreferrer">@include('sales.partials.icon',['name'=>'web']) Ver sitio</a>@endif</div>
+<h3 style="margin-top:23px">Evidencia para conversar</h3>@forelse($lead->signalRows->where('review_status','confirmed')->take(4) as $signal)<div class="work-evidence">{{ $signal->evidence }}</div>@empty<p class="work-evidence-empty">Todavía no hay evidencia comercial confirmada. Podés revisarla desde la ficha del prospecto.</p>@endforelse
+<details><summary>@include('sales.partials.icon',['name'=>'clock']) Posponer este contacto</summary><form method="post" action="{{ route('leads.snooze',$lead) }}">@csrf<input type="hidden" name="campaign_id" value="{{ $context?->id }}"><label>Posponer hasta<input type="datetime-local" name="due_at" value="{{ now()->timezone($preferences['timezone'])->addDay()->format('Y-m-d\TH:i') }}" required></label><button class="secondary">Posponer</button></form></details>
+<details><summary>Más acciones</summary><form method="post" action="{{ route('leads.status',$lead) }}">@csrf<input type="hidden" name="status" value="PAUSED"><input type="hidden" name="campaign_id" value="{{ $context?->id }}"><input type="hidden" name="reason" value="Pausa desde cola"><button class="secondary">Pausar oportunidad</button></form></details>
+</div><div class="work-message"><div class="message-toolbar"><form method="get" action="{{ route('queue') }}" class="grid"><input type="hidden" name="campaign" value="{{ $context?->id }}"><input type="hidden" name="lead" value="{{ $lead->id }}"><label>Canal<select name="channel">@foreach(['email'=>'Email','phone'=>'Teléfono','whatsapp'=>'WhatsApp','manual'=>'Otro'] as $key=>$label)<option value="{{ $key }}" @selected($work['channel']===$key)>{{ $label }}</option>@endforeach</select></label><label>Plantilla<select name="template"><option value="">Elegir automáticamente</option>@foreach($templates->where('stage',$work['step'])->where('channel',$work['channel']) as $template)<option value="{{ $template->id }}" @selected($work['template']?->id===$template->id)>{{ $template->name }}</option>@endforeach</select></label><button class="secondary">Preparar</button></form></div>
+@if(!$work['template'])<p class="panel-note">Escribí un mensaje o elegí una plantilla compatible para este contacto.</p>@endif @if($message['missing'])<p class="error">Completá antes de contactar: {{ implode(', ',$message['missing']) }}.</p>@endif
+<form method="post" action="{{ route('contact-attempts.store') }}">@csrf<input type="hidden" name="lead_id" value="{{ $lead->id }}"><input type="hidden" name="contact_attempt_id" value="{{ $pending?->id }}"><input type="hidden" name="channel" value="{{ $work['channel'] }}"><input type="hidden" name="step" value="{{ $work['step'] }}"><input type="hidden" name="message_template_id" value="{{ $work['template']?->id }}"><input type="hidden" name="next" value="1">
+<div class="message-editor"><div class="message-label"><label for="message-subject-{{ $lead->id }}">Asunto</label><button type="button" data-copy-target="[data-message-subject]">@include('sales.partials.icon',['name'=>'copy']) Copiar asunto</button></div><input id="message-subject-{{ $lead->id }}" name="subject" value="{{ old('subject',$message['subject']) }}" data-message-subject placeholder="Asunto del contacto"><div class="message-label" style="margin-top:17px"><label for="message-body-{{ $lead->id }}">Mensaje</label><button type="button" data-copy-target="[data-message-body]">@include('sales.partials.icon',['name'=>'copy']) Copiar mensaje</button></div><textarea id="message-body-{{ $lead->id }}" name="message_snapshot" data-message-body placeholder="Escribí el mensaje para este contacto…">{{ old('message_snapshot',$message['body']) }}</textarea></div>
+<details class="work-form-fields"><summary>Detalles del registro</summary><div class="grid"><label>Campaña<select name="campaign_id" required>@foreach($campaigns as $option)<option value="{{ $option->id }}" @selected(old('campaign_id',$context?->id)==$option->id)>{{ $option->name }}</option>@endforeach</select></label><label>Fecha realizada<input type="datetime-local" name="performed_at" value="{{ old('performed_at',now()->timezone($preferences['timezone'])->format('Y-m-d\TH:i')) }}" required></label><label>Resultado<input name="result" value="{{ old('result','contacted') }}"></label></div></details>
+@if($campaigns->isEmpty())<p class="error">Creá una campaña para atribuir este contacto. <a href="{{ route('campaigns',['create'=>1]) }}">Crear campaña</a></p>@endif
+<div class="work-footer"><a class="next-link" href="{{ route('queue',['campaign'=>$context?->id,'skip'=>implode(',',array_filter([request('skip'),$lead->id]))]) }}">Siguiente sin registrar</a><button @disabled($campaigns->isEmpty())>Registrar contacto y continuar @include('sales.partials.icon',['name'=>'arrow'])</button></div>
+</form></div></div></section>
+@empty<div class="queue-empty">@include('sales.partials.empty-state',['emptyIcon'=>'check','emptyTitle'=>'Todo al día en esta vista','emptyText'=>'No hay contactos que requieran acción ahora. Podés revisar tus prospectos o elegir otra campaña.','emptyAction'=>'Revisar prospectos','emptyUrl'=>route('leads')])</div>@endforelse
+{{ $leads->links() }}
 @endsection

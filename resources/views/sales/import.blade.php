@@ -1,25 +1,9 @@
 @extends('layouts.app')
-
 @section('content')
-<section>
-    <h1>Importar CSV</h1>
-    <p class="muted">Usa CSV exportado por la herramienta externa de Google Maps.</p>
-    <form method="post" action="/imports" enctype="multipart/form-data">
-        @csrf
-        <div class="grid">
-            <label>Campaña
-                <select name="campaign_id" required>
-                    @foreach ($campaigns as $campaign)
-                        <option value="{{ $campaign->id }}">{{ $campaign->name }}</option>
-                    @endforeach
-                </select>
-            </label>
-            <label>Consulta<input name="query"></label>
-            <label>Ubicación<input name="location"></label>
-            <label>CSV<input type="file" name="csv" required></label>
-        </div>
-        <button>Importar</button>
-    </form>
+<div class="page-head"><div><span class="eyebrow">Ampliá tu base de contactos</span><h1>Importar prospectos</h1><p class="muted">Revisá el archivo y las columnas antes de incorporar los datos.</p></div></div>
+<div class="import-steps"><span class="import-step active"><b>1</b> Elegir archivo</span><span class="import-connector"></span><span class="import-step"><b>2</b> Revisar columnas</span><span class="import-connector"></span><span class="import-step"><b>3</b> Incorporar datos</span></div>
+<section style="max-width:800px"><h2>Archivo y contexto</h2>
+@if($campaigns->isEmpty())<div class="panel-note">Creá una campaña para organizar los registros de esta importación. <a href="{{ route('campaigns',['create'=>1]) }}">Crear campaña</a></div>@endif
+<form method="post" action="{{ route('imports.preview') }}" enctype="multipart/form-data">@csrf<fieldset class="form-group"><legend>¿Dónde querés incorporar los prospectos?</legend><div class="grid"><label>Campaña<select name="campaign_id" required>@foreach($campaigns as $campaign)<option value="{{ $campaign->id }}" @selected(request('campaign')==$campaign->id)>{{ $campaign->name }}</option>@endforeach</select></label><label>Fuente<select name="source"><option value="csv_manual">CSV manual</option><option value="google_maps">Google Maps</option><option value="referral">Referidos</option><option value="web">Web</option></select></label></div></fieldset><fieldset class="form-group"><legend>Elegí tu archivo</legend><label>Archivo CSV<input type="file" name="csv" accept=".csv,.txt,text/csv,text/plain" required></label><p class="form-help">Hasta 20 MB. Se admiten columnas separadas por coma o punto y coma.</p></fieldset><div class="form-footer"><a class="button light" href="{{ route('leads') }}">Cancelar</a><button @disabled($campaigns->isEmpty())>Revisar archivo @include('sales.partials.icon',['name'=>'arrow'])</button></div></form>
 </section>
 @endsection
-

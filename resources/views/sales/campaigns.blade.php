@@ -1,109 +1,23 @@
 @extends('layouts.app')
-
 @section('content')
-<div class="page-head">
-    <div>
-        <h1>Campañas</h1>
-        <p class="muted">Usa la campaña como contexto principal de trabajo.</p>
-    </div>
-</div>
-
-<section>
-    <h2>Crear campaña</h2>
-    <form method="post" action="/campaigns">
-        @csrf
-        <div class="grid">
-            <label>Nombre<input name="name" required></label>
-            <label>Segmento<input name="segment"></label>
-            <label>País<input name="country"></label>
-            <label>Ciudad<input name="city"></label>
-            <label>Oferta
-                <select name="offer_id">
-                    <option value="">Sin oferta</option>
-                    @foreach ($offers as $offer)
-                        <option value="{{ $offer->id }}">{{ $offer->name }}</option>
-                    @endforeach
-                </select>
-            </label>
-            <label>Fuente
-                <select name="source" required>
-                    <option value="google_maps">Google Maps</option>
-                    <option value="csv_manual">CSV manual</option>
-                    <option value="referral">Referido</option>
-                    <option value="web">Web propia</option>
-                </select>
-            </label>
-            <label>Límite de adquisición<input name="scrape_limit" type="number" value="50" min="1"></label>
-        </div>
-        <input type="hidden" name="language" value="es">
-        <input type="hidden" name="channel" value="manual">
-        <input type="hidden" name="mode" value="manual">
-        <input type="hidden" name="daily_limit" value="20">
-        <input type="hidden" name="follow_up_1_delay_days" value="3">
-        <input type="hidden" name="follow_up_2_delay_days" value="7">
-        <details class="panel">
-            <summary>Configuración avanzada</summary>
-            <div class="grid" style="margin-top: 12px;">
-                <label>Idioma<input name="language_override" value="es" disabled></label>
-                <label>Contacto operativo<input value="manual" disabled></label>
-                <label>Límite diario<input value="20" disabled></label>
-                <label>Follow-up 1 días<input value="3" disabled></label>
-                <label>Follow-up 2 días<input value="7" disabled></label>
-            </div>
-            <p class="muted">Estos valores quedan fijos mientras no haya mensajería automática.</p>
-        </details>
-        <div class="actions">
-            <label><input type="checkbox" name="dry_run" value="1" checked> Dry-run</label>
-            <label><input type="checkbox" name="kill_switch" value="1"> Pausar desde el inicio</label>
-            <button>Crear campaña</button>
-        </div>
-    </form>
+<div class="page-head"><div><span class="eyebrow">Contextos de trabajo</span><h1>Campañas</h1><p class="muted">Organizá tus prospectos y seguimientos por objetivo comercial.</p></div><button type="button" data-drawer-open="campaign-create">@include('sales.partials.icon',['name'=>'plus']) Nueva campaña</button></div>
+<section><div class="section-head"><h2>Campañas existentes</h2><span class="table-caption">{{ $campaigns->count() }} {{ $campaigns->count() === 1 ? 'campaña' : 'campañas' }}</span></div>
+@if($campaigns->isEmpty())
+    @include('sales.partials.empty-state',['emptyIcon'=>'campaign','emptyTitle'=>'Creá tu primer contexto de trabajo','emptyText'=>'Una campaña agrupa los prospectos, contactos y oportunidades de un mismo objetivo.','emptyDrawer'=>'campaign-create','emptyButton'=>'Crear campaña'])
+@else
+<div class="table-wrap"><table class="responsive-table"><thead><tr><th>Campaña</th><th>Contexto</th><th>Oferta</th><th>Estado</th><th>Actividad</th><th>Acciones</th></tr></thead><tbody>
+@foreach($campaigns as $campaign)<tr><td class="cell-name"><strong><a href="{{ route('campaigns.show',$campaign) }}">{{ $campaign->name }}</a></strong><div class="muted">{{ ['google_maps'=>'Google Maps','csv_manual'=>'CSV','referral'=>'Referidos','web'=>'Web'][$campaign->source] ?? $campaign->source }}</div></td><td>{{ $campaign->segment ?: 'General' }}<div class="muted">{{ $campaign->city }} {{ $campaign->country }}</div></td><td>{{ $campaign->offer?->name ?? 'Sin oferta definida' }}</td><td>@include('sales.partials.status-badge',['status'=>$campaign->kill_switch ? 'paused' : $campaign->status])</td><td><strong>{{ $campaign->contact_attempts_count }}</strong> intentos realizados<div class="muted">{{ $campaign->queries_count }} búsquedas</div></td><td class="cell-actions"><div class="row-actions"><a class="button small light" href="{{ route('campaigns.show',$campaign) }}">Abrir @include('sales.partials.icon',['name'=>'arrow'])</a><details class="action-menu"><summary aria-label="Más acciones para {{ $campaign->name }}">@include('sales.partials.icon',['name'=>'more'])</summary><div class="action-menu-list"><a href="{{ route('campaigns.show',['campaign'=>$campaign->id,'tab'=>'acquisition']) }}">@include('sales.partials.icon',['name'=>'upload']) Obtener prospectos</a><a href="{{ route('campaigns.show',['campaign'=>$campaign->id,'tab'=>'metrics']) }}">@include('sales.partials.icon',['name'=>'chart']) Ver métricas</a>@unless($campaign->kill_switch)<form method="post" action="{{ route('campaigns.kill-switch',$campaign) }}">@csrf<button class="danger">Pausar campaña</button></form>@else<form method="post" action="{{ route('campaigns.resume',$campaign) }}">@csrf<button>Reactivar campaña</button></form>@endunless</div></details></div></td></tr>@endforeach
+</tbody></table></div>
+@endif
 </section>
-
-<section>
-    <h2>Workspaces</h2>
-    @if ($campaigns->isEmpty())
-        <div class="empty">No hay campañas todavía. Crea una para iniciar el flujo comercial.</div>
-    @else
-        <table>
-            <tr>
-                <th>Campaña</th>
-                <th>Contexto</th>
-                <th>Oferta</th>
-                <th>Estado</th>
-                <th>Actividad</th>
-                <th>Acciones</th>
-            </tr>
-            @foreach ($campaigns as $campaign)
-                <tr>
-                    <td>
-                        <strong><a href="/campaigns/{{ $campaign->id }}">{{ $campaign->name }}</a></strong>
-                        <div class="muted">{{ $campaign->source }}</div>
-                    </td>
-                    <td>{{ $campaign->segment }}<br><span class="muted">{{ $campaign->city }} {{ $campaign->country }}</span></td>
-                    <td>{{ $campaign->offer?->name ?? 'Sin oferta' }}</td>
-                    <td>
-                        <span @class(['badge', 'warn' => $campaign->kill_switch, 'good' => ! $campaign->kill_switch])>
-                            {{ $campaign->kill_switch ? 'pausada' : $campaign->status }}
-                        </span>
-                    </td>
-                    <td>
-                        {{ $campaign->queries_count }} queries<br>
-                        <span class="muted">{{ $campaign->contact_attempts_count }} contactos</span>
-                    </td>
-                    <td class="row-actions">
-                        <a class="button" href="/campaigns/{{ $campaign->id }}">Abrir</a>
-                        <a class="button secondary" href="/campaigns/{{ $campaign->id }}?tab=acquisition">Obtener leads</a>
-                        @unless ($campaign->kill_switch)
-                            <form method="post" action="/campaigns/{{ $campaign->id }}/kill-switch">
-                                @csrf
-                                <button class="danger">Pausar</button>
-                            </form>
-                        @endunless
-                    </td>
-                </tr>
-            @endforeach
-        </table>
-    @endif
-</section>
+@component('sales.partials.drawer',['drawerId'=>'campaign-create','drawerTitle'=>'Crear campaña','drawerEyebrow'=>'Un nuevo contexto comercial'])
+<form method="post" action="{{ route('campaigns') }}" data-create-form>@csrf
+    <fieldset class="form-group"><legend>Identidad de la campaña</legend><label>Nombre<input name="name" value="{{ old('name') }}" placeholder="Por ejemplo: Contactos de octubre" required autofocus></label><div class="grid" style="margin-top:14px"><label>Segmento<input name="segment" value="{{ old('segment') }}" placeholder="Tipo de negocio o actividad"></label><label>Oferta<select name="offer_id"><option value="">Sin oferta</option>@foreach($offers as $offer)<option value="{{ $offer->id }}" @selected(old('offer_id')==$offer->id)>{{ $offer->name }}</option>@endforeach</select></label></div></fieldset>
+    <fieldset class="form-group"><legend>Ubicación y origen</legend><div class="grid"><label>País<input name="country" value="{{ old('country',$preferences['country']) }}"></label><label>Ciudad<input name="city" value="{{ old('city') }}"></label><label>Fuente<select name="source" required>@foreach(['google_maps'=>'Google Maps','csv_manual'=>'CSV manual','referral'=>'Referido','web'=>'Web propia'] as $key=>$label)<option value="{{ $key }}" @selected(old('source')===$key)>{{ $label }}</option>@endforeach</select></label><label>Límite de adquisición<input name="scrape_limit" type="number" value="{{ old('scrape_limit',50) }}" min="1" max="500" required></label></div></fieldset>
+    <input type="hidden" name="language" value="{{ $preferences['language'] }}"><input type="hidden" name="channel" value="manual"><input type="hidden" name="mode" value="manual">
+    <fieldset class="form-group"><legend>Seguimientos y límites</legend><div class="grid"><label>Límite diario<input name="daily_limit" type="number" value="{{ old('daily_limit',20) }}" min="1" max="500" required></label><label>Días al primer seguimiento<input name="follow_up_1_delay_days" type="number" value="{{ old('follow_up_1_delay_days',3) }}" min="1" max="60" required></label><label>Días al segundo seguimiento<input name="follow_up_2_delay_days" type="number" value="{{ old('follow_up_2_delay_days',7) }}" min="1" max="90" required></label></div><p class="form-help">El segundo plazo cuenta desde el primer seguimiento.</p></fieldset>
+    <input type="hidden" name="dry_run" value="0"><label><input type="checkbox" name="dry_run" value="1" @checked(old('dry_run','1'))> Simular los envíos automáticos</label><label><input type="checkbox" name="kill_switch" value="1" @checked(old('kill_switch',false))> Crear la campaña pausada</label>
+    <div class="form-footer"><button type="button" class="secondary" data-drawer-close>Cancelar</button><button>Crear campaña</button></div>
+</form>
+@endcomponent
 @endsection

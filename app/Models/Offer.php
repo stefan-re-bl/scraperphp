@@ -10,4 +10,9 @@ class Offer extends Model
     use HasFactory;
 
     protected $guarded = [];
+
+    protected function casts(): array
+    {
+        return ['rules' => 'array', 'active' => 'boolean'];
+    }
 }

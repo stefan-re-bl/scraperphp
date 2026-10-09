@@ -2,261 +2,252 @@
 
 namespace App\Services;
 
+use App\Jobs\EnrichLead;
+use App\Jobs\ImportLeadFile;
 use App\Models\Campaign;
-use App\Models\Exclusion;
 use App\Models\ImportRun;
 use App\Models\Lead;
 use App\Models\LeadSource;
-use App\Models\Offer;
+use App\Models\ScrapeRun;
 use App\Models\SystemLog;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class LeadImporter
 {
-    public function __construct(
-        private readonly LeadScorer $scorer,
-        private readonly LeadPipeline $pipeline,
-        private readonly LeadEnricher $enricher,
-        private readonly OfferMatcher $offerMatcher,
-    ) {}
+    public const FIELDS = ['name', 'category', 'location', 'city', 'website', 'email', 'phone', 'place_id', 'contact_person', 'contact_role', 'tags'];
+
+    public function __construct(private readonly LeadScorer $scorer, private readonly LeadPipeline $pipeline, private readonly OfferMatcher $matcher, private readonly ContactNormalizer $normalizer, private readonly CampaignMembership $memberships, private readonly ExclusionService $exclusions) {}
+
+    public function preview(string $path, array $mapping = []): array
+    {
+        [$handle, $headers, $delimiter] = $this->open($path);
+        $rows = [];
+        while (count($rows) < 5 && ($row = fgetcsv($handle, separator: $delimiter, escape: '')) !== false) {
+            $rows[] = $this->record($headers, $row, $mapping);
+        }
+        fclose($handle);
+
+        return ['headers' => $headers, 'rows' => $rows];
+    }
+
+    public function enqueue(UploadedFile $file, Campaign $campaign, array $meta = []): ImportRun
+    {
+        $path = $file->store('imports');
+
+        return $this->enqueuePath(storage_path('app/private/'.$path), $campaign, $meta);
+    }
+
+    public function enqueuePath(string $path, Campaign $campaign, array $meta = []): ImportRun
+    {
+        unset($meta['csv']);
+        $this->preview($path, $meta['mapping'] ?? []);
+        if ($campaign->kill_switch || $campaign->status === 'paused') {
+            throw ValidationException::withMessages(['campaign_id' => 'La campaña está pausada.']);
+        }
+        $run = ImportRun::create(['campaign_id' => $campaign->id, 'source' => $meta['source'] ?? $campaign->source,
+            'query' => $meta['query'] ?? null, 'location' => $meta['location'] ?? null, 'segment' => $campaign->segment,
+            'file_path' => $path, 'mapping' => $meta['mapping'] ?? [], 'raw_metadata' => $meta, 'status' => 'queued']);
+        ImportLeadFile::dispatch($run->id)->onQueue('sales');
+
+        return $run->refresh();
+    }
 
     public function importCsv(UploadedFile|string $file, Campaign $campaign, array $meta = []): ImportRun
     {
         $path = $file instanceof UploadedFile ? $file->getRealPath() : $file;
-
-        return DB::transaction(function () use ($path, $campaign, $meta) {
-            $run = ImportRun::create([
-                'campaign_id' => $campaign->id,
-                'campaign_query_id' => $meta['campaign_query_id'] ?? null,
-                'scrape_run_id' => $meta['scrape_run_id'] ?? null,
-                'source' => 'google_maps',
-                'query' => $meta['query'] ?? null,
-                'segment' => $campaign->segment,
-                'location' => $meta['location'] ?? null,
-                'file_path' => $path,
-                'started_at' => Carbon::now(),
-            ]);
-
-            $handle = fopen($path, 'r');
-            $headers = $this->headers((array) fgetcsv($handle, escape: '\\'));
-            $raw = $imported = $duplicates = $possibleDuplicates = $errors = 0;
-            $maxRows = isset($meta['max_rows']) ? (int) $meta['max_rows'] : null;
-
-            while (($row = fgetcsv($handle, escape: '\\')) !== false) {
-                $raw++;
-                $record = $this->record($headers, $row);
-
-                if ($maxRows && $raw > $maxRows) {
-                    continue;
-                }
-
-                try {
-                    $data = $this->normalize($record, $campaign);
-                    $decision = $this->duplicateDecision($data);
-
-                    if ($this->isExcluded($data)) {
-                        $duplicates++;
-
-                        continue;
-                    }
-
-                    if ($decision['status'] === 'strong_duplicate') {
-                        $duplicates++;
-                        SystemLog::create([
-                            'type' => 'deduplication',
-                            'message' => 'Lead descartado por duplicado fuerte.',
-                            'context' => [
-                                'rule' => $decision['rule'],
-                                'matched_lead_id' => $decision['lead']?->id,
-                                'row' => $record,
-                            ],
-                        ]);
-                    } else {
-                        if ($decision['status'] === 'possible_duplicate') {
-                            $possibleDuplicates++;
-                            $data['duplicate_status'] = 'possible_duplicate';
-                            $data['duplicate_rule'] = $decision['rule'];
-                            $data['possible_duplicate_of_lead_id'] = $decision['lead']?->id;
-                        }
-
-                        $lead = Lead::create($data);
-                        $this->enricher->enrich($lead);
-                        $this->scorer->score($lead);
-                        $this->suggestOffer($lead, $campaign);
-                        $lead->refresh();
-                        $this->pipeline->move($lead, $lead->score_total >= 45 ? 'QUEUED' : 'ENRICHED', 'import_csv');
-                        $imported++;
-
-                        LeadSource::create([
-                            'lead_id' => $lead->id,
-                            'import_run_id' => $run->id,
-                            'source' => 'google_maps',
-                            'source_identifier' => $data['source_identifier'] ?? null,
-                            'source_url' => $record['url'] ?? $record['link'] ?? null,
-                            'query' => $meta['query'] ?? null,
-                            'observed_at' => Carbon::now(),
-                        ]);
-                    }
-                } catch (\Throwable $exception) {
-                    $errors++;
-                    SystemLog::create([
-                        'type' => 'import_error',
-                        'message' => $exception->getMessage(),
-                        'context' => ['row' => $record],
-                    ]);
+        $run = isset($meta['run_id']) ? ImportRun::findOrFail($meta['run_id']) : ImportRun::create([
+            'campaign_id' => $campaign->id, 'campaign_query_id' => $meta['campaign_query_id'] ?? null,
+            'scrape_run_id' => $meta['scrape_run_id'] ?? null, 'source' => $meta['source'] ?? $campaign->source,
+            'query' => $meta['query'] ?? null, 'location' => $meta['location'] ?? null,
+            'segment' => $campaign->segment, 'file_path' => $path, 'mapping' => $meta['mapping'] ?? [], 'status' => 'queued',
+        ]);
+        if ($run->status === 'completed') {
+            return $run;
+        }
+        $token = Str::uuid()->toString();
+        $claimed = ImportRun::whereKey($run->id)->where(fn ($q) => $q->whereNull('claimed_at')->orWhere('claimed_at', '<', now()->subMinutes(15)))
+            ->update(['status' => 'processing', 'claim_token' => $token, 'claimed_at' => now(), 'started_at' => $run->started_at ?? now(), 'error_message' => null]);
+        if (! $claimed) {
+            return $run->refresh();
+        }
+        $run->refresh();
+        $handle = null;
+        try {
+            if (! is_file($path)) {
+                throw new \RuntimeException('No se encontró el archivo importado.');
+            }
+            $hash = hash_file('sha256', $path);
+            if ($run->file_hash && $run->file_hash !== $hash) {
+                throw new \RuntimeException('El archivo cambió desde la importación anterior. Importalo como un archivo nuevo.');
+            }
+            $run->update(['file_hash' => $hash]);
+            [$handle, $headers, $delimiter] = $this->open($path);
+            $counts = $run->only(['raw_count', 'imported_count', 'duplicate_count', 'possible_duplicate_count', 'excluded_count', 'error_count']);
+            $rowNumber = 0;
+            $cancelled = false;
+            if ($run->processed_rows > 0) {
+                foreach (Lead::whereNull('enriched_at')->whereHas('sources', fn ($q) => $q->where('import_run_id', $run->id))->pluck('id') as $leadId) {
+                    EnrichLead::dispatch($leadId)->onQueue('sales');
                 }
             }
+            while (($row = fgetcsv($handle, separator: $delimiter, escape: '')) !== false) {
+                if ($row === [null]) {
+                    continue;
+                }
+                $rowNumber++;
+                if ($rowNumber <= $run->processed_rows) {
+                    continue;
+                }
+                if ($campaign->fresh()->kill_switch || $campaign->fresh()->status === 'paused'
+                    || (isset($meta['cancel_run_id']) && ScrapeRun::whereKey($meta['cancel_run_id'])->whereNotNull('cancel_requested_at')->exists())) {
+                    $cancelled = true;
+                    break;
+                }
+                $record = $this->record($headers, $row, $meta['mapping'] ?? $run->mapping ?? []);
+                $result = DB::transaction(function () use ($record, $campaign, $run, $meta, $rowNumber, &$counts, $token) {
+                    if (! ImportRun::whereKey($run->id)->where('claim_token', $token)->exists()) {
+                        throw new \RuntimeException('La importación está siendo procesada por otra tarea.');
+                    }
+                    $result = ['kind' => 'skipped'];
+                    if (! isset($meta['max_rows']) || $rowNumber <= $meta['max_rows']) {
+                        try {
+                            $result = DB::transaction(function () use ($record, $campaign, $run, $meta) {
+                                $data = $this->normalize($record, $campaign, $run->source);
+                                if ($this->exclusions->matches($data)) {
+                                    return ['kind' => 'excluded'];
+                                }
+                                $duplicate = $this->duplicate($data);
+                                if ($duplicate['status'] === 'strong') {
+                                    $lead = $duplicate['lead'];
+                                } else {
+                                    $lead = Lead::create($data + ['duplicate_status' => $duplicate['status'] === 'possible' ? 'possible_duplicate' : 'unique',
+                                        'duplicate_rule' => $duplicate['rule'], 'possible_duplicate_of_lead_id' => $duplicate['lead']?->id]);
+                                    $offer = $campaign->offer ?? $this->matcher->match($lead);
+                                    $lead->update(['suggested_offer_id' => $offer?->id, 'offer_match_reason' => $campaign->offer ? 'Oferta definida para esta campaña.' : $lead->offer_match_reason]);
+                                    $this->scorer->score($lead);
+                                    $this->pipeline->move($lead, $lead->score_total >= 45 && $lead->contactability_score > 0 ? 'QUEUED' : 'ENRICHED', 'import_csv');
+                                }
+                                $this->memberships->attach($lead, $campaign);
+                                LeadSource::firstOrCreate(['lead_id' => $lead->id, 'import_run_id' => $run->id], [
+                                    'source' => $run->source, 'source_identifier' => $data['source_identifier'], 'source_url' => $record['url'] ?? $record['link'] ?? null,
+                                    'query' => $meta['query'] ?? null, 'observed_at' => now(),
+                                ]);
 
-            fclose($handle);
+                                return ['kind' => $duplicate['status'], 'lead_id' => $lead->id];
+                            });
+                        } catch (ValidationException $exception) {
+                            $result = ['kind' => 'error'];
+                            SystemLog::create(['type' => 'import_error', 'message' => $exception->getMessage(), 'context' => ['import_run_id' => $run->id, 'row_number' => $rowNumber, 'row' => $record]]);
+                        }
+                    }
+                    $counts['raw_count'] = $rowNumber;
+                    match ($result['kind']) {
+                        'strong' => $counts['duplicate_count']++, 'excluded' => $counts['excluded_count']++,
+                        'unique', 'possible' => $counts['imported_count']++, 'error' => $counts['error_count']++, default => null,
+                    };
+                    if ($result['kind'] === 'possible') {
+                        $counts['possible_duplicate_count']++;
+                    }
+                    $run->update($counts + ['processed_rows' => $rowNumber, 'claimed_at' => now()]);
 
-            $run->update([
-                'raw_count' => $raw,
-                'imported_count' => $imported,
-                'duplicate_count' => $duplicates,
-                'possible_duplicate_count' => $possibleDuplicates,
-                'error_count' => $errors,
-                'finished_at' => Carbon::now(),
-            ]);
+                    return $result;
+                });
+                if (in_array($result['kind'], ['unique', 'possible'])) {
+                    EnrichLead::dispatch($result['lead_id'])->onQueue('sales');
+                }
+            }
+            $run->update($counts + ['status' => $cancelled ? 'cancelled' : 'completed', 'finished_at' => now()]);
+        } catch (\Throwable $exception) {
+            $run->update(['status' => 'failed', 'error_message' => $exception->getMessage()]);
+            throw $exception;
+        } finally {
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+            ImportRun::whereKey($run->id)->where('claim_token', $token)->update(['claim_token' => null, 'claimed_at' => null]);
+        }
 
-            return $run->refresh();
-        });
+        return $run->refresh();
     }
 
-    private function headers(array $headers): array
+    private function open(string $path): array
     {
-        return array_map(fn ($header) => Str::of((string) $header)->lower()->replace([' ', '-'], '_')->toString(), $headers);
+        $handle = fopen($path, 'r');
+        if (! $handle) {
+            throw ValidationException::withMessages(['csv' => 'No se pudo leer el archivo.']);
+        }
+        $line = fgets($handle);
+        if ($line === false || trim($line) === '') {
+            fclose($handle);
+            throw ValidationException::withMessages(['csv' => 'El archivo está vacío.']);
+        }
+        $delimiter = substr_count($line, ';') > substr_count($line, ',') ? ';' : ',';
+        $headers = array_map(fn ($value) => Str::of(ltrim((string) $value, "\xEF\xBB\xBF"))->trim()->lower()->replace([' ', '-'], '_')->toString(), str_getcsv($line, separator: $delimiter, escape: ''));
+
+        return [$handle, $headers, $delimiter];
     }
 
-    private function record(array $headers, array $row): array
+    private function record(array $headers, array $row, array $mapping): array
     {
         $record = [];
-
-        foreach ($headers as $index => $header) {
-            $record[$header] = trim((string) ($row[$index] ?? ''));
+        foreach ($headers as $i => $header) {
+            $record[$header] = trim((string) ($row[$i] ?? ''));
+        }
+        foreach ($mapping as $field => $column) {
+            if (in_array($field, self::FIELDS) && filled($column)) {
+                $record[$field] = $record[$column] ?? '';
+            }
         }
 
         return $record;
     }
 
-    private function normalize(array $record, Campaign $campaign): array
+    private function normalize(array $record, Campaign $campaign, string $source): array
     {
-        $website = $this->first($record, ['website', 'website_url', 'site', 'web']);
-        $email = $this->first($record, ['email', 'emails']);
-        $phone = $this->first($record, ['phone', 'phone_number', 'telefono', 'telephone']);
+        $website = $this->normalizer->url($this->first($record, ['website', 'website_url', 'site', 'web']));
+        $name = $this->first($record, ['name', 'title', 'business_name', 'empresa']);
+        if (! $name) {
+            throw ValidationException::withMessages(['name' => 'Falta el nombre del negocio.']);
+        }
 
-        return [
-            'name' => $this->first($record, ['name', 'title', 'business_name', 'empresa']) ?: 'Sin nombre',
-            'category' => $this->first($record, ['category', 'type', 'categoria']),
-            'location' => $this->first($record, ['location', 'address', 'direccion']),
-            'country' => $campaign->country,
-            'language' => $campaign->language,
-            'website_url' => $website,
-            'domain' => $this->domain($website),
-            'email' => $email ? mb_strtolower($email) : null,
-            'phone' => $this->phone($phone),
-            'source' => 'google_maps',
-            'source_identifier' => $this->first($record, ['place_id', 'cid', 'google_id', 'id']),
-            'segment' => $campaign->segment,
-            'acquired_at' => Carbon::now(),
-            'status' => 'NEW',
-        ];
+        return ['name' => $name, 'category' => $this->first($record, ['category', 'type', 'categoria']),
+            'location' => $this->first($record, ['location', 'address', 'direccion']), 'city' => $record['city'] ?? $campaign->city,
+            'country' => $campaign->country, 'language' => $campaign->language, 'website_url' => $website,
+            'domain' => $this->normalizer->domain($website), 'email' => $this->normalizer->email($this->first($record, ['email', 'emails'])),
+            'phone' => $this->normalizer->phone($this->first($record, ['phone', 'phone_number', 'telefono', 'telephone']), $campaign->country),
+            'contact_person' => $record['contact_person'] ?? null, 'contact_role' => $record['contact_role'] ?? null,
+            'tags' => array_values(array_filter(array_map('trim', explode(',', $record['tags'] ?? '')))),
+            'source' => $source, 'source_identifier' => $this->first($record, ['place_id', 'cid', 'google_id', 'id']),
+            'segment' => $campaign->segment, 'acquired_at' => now(), 'status' => 'NEW'];
     }
 
-    private function duplicateDecision(array $data): array
+    private function duplicate(array $data): array
     {
-        if ($data['source_identifier'] ?? null) {
-            $lead = Lead::where('source_identifier', $data['source_identifier'])->first();
-
-            if ($lead) {
-                return ['status' => 'strong_duplicate', 'rule' => 'source_identifier', 'lead' => $lead];
+        $strong = ! empty($data['source_identifier']) ? Lead::where('source', $data['source'])->where('source_identifier', $data['source_identifier'])->first() : null;
+        if ($strong) {
+            return ['status' => 'strong', 'rule' => 'source_identifier', 'lead' => $strong];
+        }
+        $candidates = Lead::where(function ($q) use ($data) {
+            foreach (['domain', 'email', 'phone'] as $field) {
+                if (filled($data[$field])) {
+                    $q->orWhere($field, $data[$field]);
+                }
+            }
+            $q->orWhere('name', $data['name']);
+        })->get();
+        foreach ($candidates as $lead) {
+            similar_text(Str::ascii(mb_strtolower($lead->name)), Str::ascii(mb_strtolower($data['name'])), $name);
+            similar_text(Str::ascii(mb_strtolower($lead->location ?? '')), Str::ascii(mb_strtolower($data['location'] ?? '')), $location);
+            if ($name >= 88 && $location >= 88 && filled($data['location'])) {
+                return ['status' => 'strong', 'rule' => 'identity_location', 'lead' => $lead];
             }
         }
+        $match = $candidates->first(fn ($lead) => collect(['domain', 'email', 'phone'])->contains(fn ($field) => filled($data[$field]) && $data[$field] === $lead->$field));
 
-        if ($data['email'] ?? null) {
-            $lead = Lead::where('email', $data['email'])->first();
-
-            if ($lead) {
-                return ['status' => 'strong_duplicate', 'rule' => 'email', 'lead' => $lead];
-            }
-        }
-
-        $domainMatch = ($data['domain'] ?? null) ? Lead::where('domain', $data['domain'])->get() : collect();
-
-        foreach ($domainMatch as $lead) {
-            if ($this->similar($data['name'] ?? '', $lead->name) && $this->similar($data['location'] ?? '', $lead->location ?? '')) {
-                return ['status' => 'strong_duplicate', 'rule' => 'domain_name_location', 'lead' => $lead];
-            }
-        }
-
-        if ($domainMatch->isNotEmpty()) {
-            return ['status' => 'possible_duplicate', 'rule' => 'shared_domain', 'lead' => $domainMatch->first()];
-        }
-
-        if ($data['phone'] ?? null) {
-            $lead = Lead::where('phone', $data['phone'])->first();
-
-            if ($lead) {
-                return ['status' => 'possible_duplicate', 'rule' => 'shared_phone', 'lead' => $lead];
-            }
-        }
-
-        return ['status' => 'unique', 'rule' => null, 'lead' => null];
-    }
-
-    private function similar(string $a, string $b): bool
-    {
-        $left = $this->normalizeComparable($a);
-        $right = $this->normalizeComparable($b);
-
-        if ($left === '' || $right === '') {
-            return false;
-        }
-
-        if ($left === $right) {
-            return true;
-        }
-
-        similar_text($left, $right, $percent);
-
-        return $percent >= 88;
-    }
-
-    private function normalizeComparable(string $value): string
-    {
-        $value = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value) ?: $value;
-        $value = mb_strtolower($value);
-        $value = preg_replace('/[^a-z0-9]+/', ' ', $value);
-
-        return trim((string) preg_replace('/\s+/', ' ', $value));
-    }
-
-    private function suggestOffer(Lead $lead, Campaign $campaign): void
-    {
-        $offer = $campaign->offer ?? $this->offerMatcher->match($lead) ?? Offer::where('active', true)->first();
-
-        if ($offer) {
-            $lead->update(['suggested_offer_id' => $offer->id]);
-        }
-    }
-
-    private function isExcluded(array $data): bool
-    {
-        foreach ([
-            'email' => $data['email'] ?? null,
-            'domain' => $data['domain'] ?? null,
-            'phone' => $data['phone'] ?? null,
-            'source_identifier' => $data['source_identifier'] ?? null,
-            'name' => $data['name'] ?? null,
-        ] as $type => $value) {
-            if ($value && Exclusion::where('type', $type)->where('value', $value)->exists()) {
-                return true;
-            }
-        }
-
-        return false;
+        return ['status' => $match ? 'possible' : 'unique', 'rule' => $match ? (filled($data['domain']) && $match->domain === $data['domain'] ? 'shared_domain' : (filled($data['phone']) && $match->phone === $data['phone'] ? 'shared_phone' : 'shared_email')) : null, 'lead' => $match];
     }
 
     private function first(array $record, array $keys): ?string
@@ -268,23 +259,5 @@ class LeadImporter
         }
 
         return null;
-    }
-
-    private function domain(?string $url): ?string
-    {
-        if (blank($url)) {
-            return null;
-        }
-
-        $host = parse_url(str_starts_with($url, 'http') ? $url : "https://{$url}", PHP_URL_HOST);
-
-        return $host ? preg_replace('/^www\./', '', mb_strtolower($host)) : null;
-    }
-
-    private function phone(?string $phone): ?string
-    {
-        $clean = preg_replace('/[^\d+]/', '', (string) $phone);
-
-        return $clean ?: null;
     }
 }

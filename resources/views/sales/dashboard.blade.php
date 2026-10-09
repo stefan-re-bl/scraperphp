@@ -1,100 +1,31 @@
 @extends('layouts.app')
-
 @section('content')
-<div class="page-head">
-    <div>
-        <h1>Inicio</h1>
-        <p class="muted">Acciones pendientes y embudo reciente.</p>
-    </div>
-    <div class="actions">
-        <a class="button" href="/campaigns">Abrir campañas</a>
-        <a class="button secondary" href="/leads">Revisar leads</a>
-    </div>
+<div class="page-head"><div><span class="eyebrow">Tu trabajo, en orden</span><h1>Inicio</h1><p class="muted">Lo que necesita tu atención y cómo avanzan tus oportunidades.</p></div><a class="button" href="{{ route('queue') }}">@include('sales.partials.icon',['name'=>'queue']) Abrir cola de trabajo</a></div>
+<div class="section-head"><h2>Prioridades de hoy</h2><span class="muted">Acciones pendientes</span></div>
+<div class="task-grid">
+    @foreach ([['followups','Seguimientos vencidos','Retomá los contactos que esperan una acción.','clock',route('queue')],['replies','Respuestas pendientes','Revisá qué necesitan tus contactos.','reply',route('replies',['pending'=>1])],['queue','Prospectos listos','Prepará el próximo contacto.','people',route('queue')],['proposals','Propuestas pendientes','Dale seguimiento al avance comercial.','proposal',route('proposals')]] as [$key,$label,$description,$taskIcon,$url])
+    <a href="{{ $url }}" @class(['task-tile','attention'=>in_array($key,['followups','replies']) && $pendingCounts[$key]>0])><span class="task-icon">@include('sales.partials.icon',['name'=>$taskIcon])</span><div class="task-copy"><strong>{{ $label }}</strong><p>{{ $description }}</p></div><span class="task-count">{{ $pendingCounts[$key] }}</span>@include('sales.partials.icon',['name'=>'arrow','iconClass'=>'task-arrow'])</a>
+    @endforeach
 </div>
-
-<section>
-    <h2>Acciones de hoy</h2>
-    <div class="grid">
-        <a class="panel" href="/leads?status=QUEUED">
-            <div class="muted">Leads listos para contactar</div>
-            <div class="metric">{{ $readyToContact->count() }}</div>
-        </a>
-        <a class="panel" href="/contact-queue">
-            <div class="muted">Follow-ups vencidos</div>
-            <div class="metric">{{ $overdueFollowUps->count() }}</div>
-        </a>
-        <a class="panel" href="/replies">
-            <div class="muted">Respuestas pendientes</div>
-            <div class="metric">{{ $pendingReplies->count() }}</div>
-        </a>
-        <a class="panel" href="/proposals">
-            <div class="muted">Propuestas pendientes</div>
-            <div class="metric">{{ $pendingProposals->count() }}</div>
-        </a>
-        <a class="panel" href="/leads?possible_duplicate=1">
-            <div class="muted">Posibles duplicados</div>
-            <div class="metric">{{ $possibleDuplicates->count() }}</div>
-        </a>
-    </div>
-</section>
-
-<section>
-    <h2>Resumen comercial</h2>
-    <div class="kpis">
-        @foreach (['contacted', 'replied', 'interested', 'proposal', 'won'] as $name)
-            <div class="kpi">
-                <div class="muted">{{ strtoupper($name) }}</div>
-                <div class="metric">{{ $metrics['counts'][$name] ?? 0 }}</div>
-                @if (($metrics['sample_size'] ?? 0) > 0 && isset($metrics['rates'][$name.'_rate']))
-                    <div class="muted">{{ $metrics['rates'][$name.'_rate'] }}%</div>
-                @endif
-            </div>
-        @endforeach
-    </div>
-</section>
-
-<section>
-    <h2>Tasas</h2>
-    <table>
-        <tr><th>Métrica</th><th>Porcentaje</th><th>Muestra</th></tr>
-        @foreach ($metrics['rates'] as $name => $value)
-            <tr>
-                <td>{{ str_replace('_', ' ', $name) }}</td>
-                <td>{{ $value }}%</td>
-                <td>{{ $metrics['sample_size'] }}</td>
-            </tr>
-        @endforeach
-    </table>
-</section>
-
-<div class="two-col">
-    <section>
-        <h2>Campañas activas</h2>
-        @forelse ($activeCampaigns as $campaign)
-                <div class="card">
-                    <strong><a href="/campaigns/{{ $campaign->id }}">{{ $campaign->name }}</a></strong>
-                <div class="muted">{{ $campaign->segment }} · {{ $campaign->country }} · {{ $campaign->source }}</div>
-                <div class="muted">Oferta: {{ $campaign->offer?->name ?? 'Sin oferta' }}</div>
-            </div>
-        @empty
-            <div class="empty">
-                No hay campañas activas.
-                <div><a class="button" href="/campaigns">Crear campaña</a></div>
-            </div>
-        @endforelse
+<div class="dashboard-grid">
+    <section><div class="section-head"><div><h2>Trabajo inmediato</h2><p class="muted">Elegí un contacto y continuá desde su ficha.</p></div><a href="{{ route('queue') }}">Ver cola @include('sales.partials.icon',['name'=>'arrow'])</a></div>
+    @if($overdueFollowUps->isNotEmpty() || $pendingReplies->isNotEmpty() || $readyToContact->isNotEmpty())
+        @foreach($overdueFollowUps->take(3) as $attempt)<div class="dashboard-list-item"><span class="task-icon">@include('sales.partials.icon',['name'=>'clock'])</span><div><strong><a href="{{ route('leads.show',$attempt->lead) }}">{{ $attempt->lead?->name }}</a></strong><p class="muted">Seguimiento vencido · @dateDisplay($attempt->due_at)</p></div><a class="button small light" href="{{ route('queue',['lead'=>$attempt->lead_id,'campaign'=>$attempt->campaign_id]) }}">Retomar</a></div>@endforeach
+        @foreach($pendingReplies->take(2) as $reply)<div class="dashboard-list-item"><span class="task-icon">@include('sales.partials.icon',['name'=>'reply'])</span><div><strong><a href="{{ route('leads.show',$reply->lead) }}">{{ $reply->lead?->name }}</a></strong><p class="muted">Respuesta pendiente de revisión</p></div><a class="button small light" href="{{ route('replies',['pending'=>1]) }}">Revisar</a></div>@endforeach
+        @foreach($readyToContact->take(4) as $lead)<div class="dashboard-list-item"><span class="avatar">{{ mb_strtoupper(mb_substr($lead->name,0,1)) }}</span><div><strong><a href="{{ route('leads.show',$lead) }}">{{ $lead->name }}</a></strong><p class="muted">{{ $lead->city ?: $lead->location ?: 'Sin ubicación' }} · prioridad {{ $lead->score_total }}</p></div><a class="button small light" href="{{ route('queue',['lead'=>$lead->id]) }}">Contactar</a></div>@endforeach
+    @else
+        @include('sales.partials.empty-state',['emptyIcon'=>'queue','emptyTitle'=>'Tu próxima acción empieza acá','emptyText'=>'Agregá o importá prospectos y enviá los que quieras contactar a la cola de trabajo.','emptyAction'=>'Agregar prospecto','emptyUrl'=>route('leads',['create'=>1])])
+    @endif
+    <div class="quick-links"><a href="{{ route('leads',['possible_duplicate'=>1]) }}">@include('sales.partials.icon',['name'=>'people']) Revisar duplicados <span class="badge">{{ $pendingCounts['duplicates'] }}</span></a><a href="{{ route('imports.create') }}">@include('sales.partials.icon',['name'=>'upload']) Importar prospectos</a></div>
     </section>
-
-    <section>
-        <h2>Trabajo inmediato</h2>
-        @forelse ($readyToContact as $lead)
-            <div class="card">
-                <strong><a href="/leads/{{ $lead->id }}">{{ $lead->name }}</a></strong>
-                <div class="muted">Score {{ $lead->score_total }} · {{ $lead->location }}</div>
-                <a class="button light" href="/contact-queue">Contactar</a>
-            </div>
-        @empty
-            <div class="empty">No hay leads en cola. Obtén o revisa leads desde una campaña.</div>
-        @endforelse
+    <section><div class="section-head"><div><h2>Campañas activas</h2><p class="muted">Tus contextos de trabajo actuales.</p></div><a href="{{ route('campaigns') }}">Ver todas</a></div>
+        @forelse($activeCampaigns as $campaign)<div class="dashboard-list-item"><span class="task-icon">@include('sales.partials.icon',['name'=>'campaign'])</span><div><strong><a href="{{ route('campaigns.show',$campaign) }}">{{ $campaign->name }}</a></strong><p class="muted">{{ $campaign->segment ?: 'General' }} · {{ $campaign->city ?: $campaign->country }}</p></div>@include('sales.partials.status-badge',['status'=>'active'])</div>
+        @empty @include('sales.partials.empty-state',['emptyIcon'=>'campaign','emptyTitle'=>'Organizá tu primera campaña','emptyText'=>'Definí el contexto para agrupar prospectos, contactos y oportunidades.','emptyAction'=>'Crear campaña','emptyUrl'=>route('campaigns',['create'=>1])]) @endforelse
     </section>
 </div>
+<section class="work-section"><div class="section-head"><div><h2>Resumen comercial</h2><p class="muted">Resultados de los contactos realizados en el período.</p></div><a href="{{ route('metrics.segmented') }}">Explorar métricas @include('sales.partials.icon',['name'=>'arrow'])</a></div>
+    <form method="get" action="{{ route('dashboard') }}" class="period-form"><label>Contactados desde<input type="date" name="from" value="{{ request('from') }}"></label><label>Hasta<input type="date" name="to" value="{{ request('to') }}"></label><button class="secondary">Aplicar período</button></form>
+    <div class="summary-strip">@foreach(['contacted'=>'Negocios contactados','responses'=>'Respondieron','interested'=>'Interesados','proposals'=>'Con propuesta','won'=>'Ganados'] as $key=>$label)<div class="kpi"><div class="muted">{{ $label }}</div><div class="metric">{{ $metrics['counts'][$key] }}</div></div>@endforeach</div>
+    <details><summary>Tasas y tamaño de la muestra</summary><table class="compact-table" data-static-table><tr><th>Métrica</th><th>Porcentaje</th><th>Muestra</th></tr>@foreach($metrics['rates'] as $key=>$value)<tr><td>{{ ['reply_rate'=>'Respuesta','interest_rate'=>'Interés','proposal_rate'=>'Propuestas','close_rate'=>'Cierre'][$key] }}</td><td>{{ $value }}%</td><td>{{ $metrics['sample_size'] }}</td></tr>@endforeach</table><p class="form-help">Cada negocio cuenta una vez. Los seguimientos son intentos adicionales: {{ $metrics['counts']['attempts'] }} realizados.</p></details>
+</section>
 @endsection

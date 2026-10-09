@@ -1,48 +1,12 @@
 @extends('layouts.app')
-
 @section('content')
-<section>
-    <h1>Plantillas</h1>
-    <form method="post" action="/templates">
-        @csrf
-        <div class="grid">
-            <label>Nombre<input name="name" required></label>
-            <label>Idioma<input name="language" value="es" required></label>
-            <label>Canal<input name="channel" value="email" required></label>
-            <label>Segmento<input name="segment"></label>
-            <label>Etapa
-                <select name="stage">
-                    <option value="initial">initial</option>
-                    <option value="follow_up_1">follow_up_1</option>
-                    <option value="follow_up_2">follow_up_2</option>
-                </select>
-            </label>
-            <label>Oferta
-                <select name="offer_id">
-                    <option value="">Sin oferta</option>
-                    @foreach ($offers as $offer)
-                        <option value="{{ $offer->id }}">{{ $offer->name }}</option>
-                    @endforeach
-                </select>
-            </label>
-        </div>
-        <label>Asunto<input name="subject"></label>
-        <label>Cuerpo<textarea name="body" required>Hola @{{negocio}}, vi una oportunidad relacionada con @{{problema_detectado}}. @{{CTA}}.</textarea></label>
-        <button>Crear plantilla</button>
-    </form>
+<div class="page-head"><div><span class="eyebrow">Mensajes reutilizables</span><h1>Plantillas</h1><p class="muted">Organizá tus mensajes por canal, oferta y momento del contacto.</p></div><button type="button" data-drawer-open="template-create">@include('sales.partials.icon',['name'=>'plus']) Nueva plantilla</button></div>
+<section><div class="section-head"><h2>Tus mensajes</h2><span class="table-caption">{{ $templates->count() }} plantillas</span></div>
+@if($templates->isEmpty())@include('sales.partials.empty-state',['emptyIcon'=>'mail','emptyTitle'=>'Prepará un mensaje para reutilizar','emptyText'=>'Las plantillas te ayudan a mantener un criterio común sin perder el contexto de cada contacto.','emptyDrawer'=>'template-create','emptyButton'=>'Crear plantilla'])
+@else<div class="table-wrap"><table class="responsive-table"><thead><tr><th>Plantilla</th><th>Canal</th><th>Etapa</th><th>Idioma</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>@foreach($templates as $template)<tr><td class="cell-name"><strong>{{ $template->name }}</strong><div class="muted">{{ $template->segment ?: 'General' }}</div></td><td>{{ ['email'=>'Email','phone'=>'Teléfono','whatsapp'=>'WhatsApp','manual'=>'Otro'][$template->channel] ?? $template->channel }}</td><td>{{ ['initial'=>'Contacto inicial','follow_up_1'=>'Seguimiento 1','follow_up_2'=>'Seguimiento 2'][$template->stage] ?? $template->stage }}</td><td>{{ strtoupper($template->language) }}</td><td>@include('sales.partials.status-badge',['status'=>$template->active ? 'available' : 'archived'])</td><td class="cell-actions"><button type="button" class="small light" data-drawer-open="template-edit-{{ $template->id }}">Editar</button></td></tr>@endforeach</tbody></table></div>@endif
 </section>
-
-<section>
-    <table>
-        <tr><th>Nombre</th><th>Canal</th><th>Etapa</th><th>Asunto</th></tr>
-        @foreach ($templates as $template)
-            <tr>
-                <td>{{ $template->name }}</td>
-                <td>{{ $template->channel }}</td>
-                <td>{{ $template->stage }}</td>
-                <td>{{ $template->subject }}</td>
-            </tr>
-        @endforeach
-    </table>
-</section>
+@component('sales.partials.drawer',['drawerId'=>'template-create','drawerTitle'=>'Crear plantilla'])<form method="post" action="{{ route('templates') }}" data-create-form>@csrf @include('sales.partials.template-form',['editingTemplate'=>null])<p class="form-help">Variables entre dobles llaves: nombre, negocio, ciudad, problema_detectado, oferta, demo, portfolio y CTA.</p><div class="form-footer"><button type="button" class="secondary" data-drawer-close>Cancelar</button><button>Crear plantilla</button></div></form>@endcomponent
+@foreach($templates as $template)
+@component('sales.partials.drawer',['drawerId'=>'template-edit-'.$template->id,'drawerTitle'=>'Editar plantilla','drawerEyebrow'=>$template->name])<form method="post" action="{{ route('templates.update',$template) }}">@csrf @method('PUT') @include('sales.partials.template-form',['editingTemplate'=>$template])<p class="form-help">Variables entre dobles llaves: nombre, negocio, ciudad, problema_detectado, oferta, demo, portfolio y CTA.</p><div class="form-footer"><button type="button" class="secondary" data-drawer-close>Cancelar</button><button>Guardar cambios</button></div></form>@endcomponent
+@endforeach
 @endsection

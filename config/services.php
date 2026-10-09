@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'scraper' => [
+        'timeout' => (int) env('GOOGLE_MAPS_SCRAPER_TIMEOUT', 300),
+        'docker' => env('GOOGLE_MAPS_SCRAPER_USE_DOCKER', true),
+        'binary' => env('GOOGLE_MAPS_SCRAPER_BIN', 'google-maps-scraper'),
+        'image' => env('GOOGLE_MAPS_SCRAPER_IMAGE', 'gosom/google-maps-scraper:latest'),
+    ],
 ];

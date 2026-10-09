@@ -1,0 +1,1 @@
+<label>Campaña de esta acción<select name="campaign_id"><option value="">Seleccionar contexto</option>@foreach ($campaigns as $campaignOption)<option value="{{ $campaignOption->id }}" @selected((string) ($selectedCampaignId ?? '') === (string) $campaignOption->id)>{{ $campaignOption->name }}</option>@endforeach</select></label>

@@ -8,8 +8,10 @@ use App\Models\Lead;
 use App\Models\LeadStatusHistory;
 use App\Models\Offer;
 use App\Models\Reply;
+use App\Services\MetricsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class SalesP0Test extends TestCase
@@ -18,6 +20,8 @@ class SalesP0Test extends TestCase
 
     public function test_csv_import_deduplicates_and_scores_leads(): void
     {
+        Http::preventStrayRequests();
+        Http::fake(['https://consultorio.test' => Http::response('<html><title>Consultorio</title><body>Contacto</body></html>')]);
         $campaign = Campaign::create([
             'name' => 'Psicologos Argentina',
             'segment' => 'psicologos',
@@ -60,6 +64,8 @@ class SalesP0Test extends TestCase
 
     public function test_csv_import_keeps_possible_commercial_duplicates(): void
     {
+        Http::preventStrayRequests();
+        Http::fake(['https://psicologos.test' => Http::response('<html><title>Servicios</title><body>Contacto</body></html>')]);
         $campaign = Campaign::create([
             'name' => 'Psicologos Argentina',
             'segment' => 'psicologos',
@@ -148,7 +154,7 @@ class SalesP0Test extends TestCase
             'contact_attempt_id' => $sent->id,
             'category' => 'interested',
             'body' => 'Me interesa.',
-            'received_at' => now()->format('Y-m-d H:i:s'),
+            'received_at' => now()->toIso8601String(),
         ])->assertRedirect();
 
         $this->assertDatabaseHas('contact_attempts', [
@@ -172,7 +178,7 @@ class SalesP0Test extends TestCase
             'channel' => 'email',
             'step' => 'initial',
             'performed_at' => now(),
-            'status' => 'sent',
+            'status' => 'sent', 'dry_run' => false,
             'manual_intervention' => true,
         ]);
 
@@ -190,7 +196,7 @@ class SalesP0Test extends TestCase
             'amount' => 500,
             'currency' => 'USD',
             'version' => 1,
-            'sent_at' => now()->format('Y-m-d H:i:s'),
+            'sent_at' => now()->toIso8601String(),
             'result' => 'won',
         ])->assertRedirect();
 
@@ -204,7 +210,11 @@ class SalesP0Test extends TestCase
             'status' => 'WON',
         ]);
 
-        $this->get('/')->assertOk()->assertSee('close rate')->assertSee('100');
+        $metrics = app(MetricsService::class)->funnel();
+        $this->assertSame(1, $metrics['counts']['contacted']);
+        $this->assertSame(1, $metrics['counts']['won']);
+        $this->assertSame(100.0, $metrics['rates']['close_rate']);
+        $this->get('/')->assertOk()->assertSee('Cierre')->assertSee('100%');
     }
 
     public function test_exports_csv_and_json(): void

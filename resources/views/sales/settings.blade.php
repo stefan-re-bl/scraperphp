@@ -8,6 +8,10 @@
     </div>
 </div>
 
+<section><h2>Preferencias de uso</h2><form method="post" action="{{ route('preferences.update') }}">@csrf @method('PUT')<div class="grid">
+<label>Zona horaria<select name="timezone">@foreach (['America/Argentina/Buenos_Aires','America/Santiago','America/Montevideo','Europe/Madrid','UTC'] as $zone)<option @selected($preferences['timezone']===$zone)>{{ $zone }}</option>@endforeach</select></label>
+<label>Moneda<input name="currency" value="{{ $preferences['currency'] }}" maxlength="3" required></label><label>País<input name="country" value="{{ $preferences['country'] }}" required></label><label>Idioma<input name="language" value="{{ $preferences['language'] }}" required></label>
+<label>Formato de fechas<select name="date_format">@foreach (['d/m/Y H:i'=>'Día/mes/año','Y-m-d H:i'=>'Año-mes-día','m/d/Y H:i'=>'Mes/día/año'] as $key=>$label)<option value="{{ $key }}" @selected($preferences['date_format']===$key)>{{ $label }}</option>@endforeach</select></label></div><button>Guardar preferencias</button></form></section>
 <div class="grid">
     <section>
         <h2>Ofertas</h2>
@@ -46,7 +50,7 @@
     </section>
 
     <section>
-        <h2>Herramientas avanzadas</h2>
+        <h2>Herramientas avanzadas</h2><a class="button" href="{{ route('scoring') }}">Reglas de prioridad</a>
         <div class="actions">
             <a class="button secondary" href="/llm-bridge">LLM Bridge</a>
             <a class="button secondary" href="/exports">Exportaciones completas</a>

@@ -1,52 +1,15 @@
 @extends('layouts.app')
-
 @section('content')
-<section>
-    <h1>Respuestas</h1>
-    <form method="post" action="/replies">
-        @csrf
-        <div class="grid">
-            <label>Lead
-                <select name="lead_id" required>
-                    @foreach ($leads as $lead)
-                        <option value="{{ $lead->id }}">{{ $lead->name }}</option>
-                    @endforeach
-                </select>
-            </label>
-            <label>Contacto
-                <select name="contact_attempt_id">
-                    <option value="">Sin asociar</option>
-                    @foreach ($attempts as $attempt)
-                        <option value="{{ $attempt->id }}">#{{ $attempt->id }} · {{ $attempt->channel }} · {{ $attempt->performed_at }}</option>
-                    @endforeach
-                </select>
-            </label>
-            <label>Categoría
-                <select name="category" required>
-                    @foreach ($categories as $category)
-                        <option value="{{ $category }}">{{ $category }}</option>
-                    @endforeach
-                </select>
-            </label>
-            <label>Fecha<input type="datetime-local" name="received_at" required></label>
-        </div>
-        <label>Texto recibido<textarea name="body"></textarea></label>
-        <button>Registrar respuesta</button>
-    </form>
+@php
+    $replyLabels=['negative'=>'No interesado','not_now'=>'Más adelante','existing_provider'=>'Ya tiene proveedor','no_budget'=>'Sin presupuesto','price_question'=>'Consulta de precio','information_request'=>'Pide información','interested'=>'Interesado','meeting'=>'Reunión','proposal'=>'Propuesta','won'=>'Ganado','lost'=>'Perdido','other'=>'Otra respuesta'];
+@endphp
+<div class="page-head"><div><span class="eyebrow">Conversaciones abiertas</span><h1>Respuestas</h1><p class="muted">Revisá lo que necesitan tus contactos y marcá lo que ya atendiste.</p></div><button type="button" data-drawer-open="reply-create" @disabled($leads->isEmpty())>@include('sales.partials.icon',['name'=>'plus']) Registrar respuesta</button></div>
+<section><div class="section-head"><h2>{{ request()->boolean('pending') ? 'Pendientes de atención' : 'Respuestas registradas' }}</h2><a href="{{ request()->boolean('pending') ? route('replies') : route('replies',['pending'=>1]) }}">{{ request()->boolean('pending') ? 'Ver todas' : 'Sólo pendientes' }}</a></div>
+@if($replies->isEmpty())@include('sales.partials.empty-state',['emptyIcon'=>'reply','emptyTitle'=>request()->boolean('pending') ? 'No hay respuestas pendientes' : 'Cada conversación cuenta','emptyText'=>'Las respuestas que registres aparecerán acá para seguir el próximo paso.','emptyAction'=>$leads->isEmpty() ? 'Agregar prospecto' : null,'emptyUrl'=>route('leads',['create'=>1]),'emptyDrawer'=>$leads->isNotEmpty() ? 'reply-create' : null,'emptyButton'=>'Registrar respuesta'])
+@else<div class="table-wrap"><table class="responsive-table"><thead><tr><th>Prospecto</th><th>Respuesta</th><th>Recibida</th><th>Atención</th><th>Acción</th></tr></thead><tbody>@foreach($replies as $reply)<tr><td class="cell-name"><strong><a href="{{ route('leads.show',$reply->lead_id) }}">{{ $reply->lead?->name }}</a></strong></td><td>{{ $replyLabels[$reply->category] ?? $reply->category }}@if($reply->body)<div class="muted">{{ Illuminate\Support\Str::limit($reply->body,90) }}</div>@endif</td><td class="cell-date">@dateDisplay($reply->received_at)</td><td><span @class(['badge','warn'=>$reply->requires_human,'good'=>!$reply->requires_human])><span class="status-dot"></span>{{ $reply->requires_human ? 'Pendiente' : 'Atendida' }}</span></td><td class="cell-actions">@if($reply->requires_human)<form method="post" action="{{ route('replies.resolve',$reply) }}">@csrf @method('PATCH')<button class="small light">@include('sales.partials.icon',['name'=>'check']) Marcar atendida</button></form>@else<span class="muted">Sin acciones pendientes</span>@endif</td></tr>@endforeach</tbody></table></div>@endif
+{{ $replies->links() }}
 </section>
-
-<section>
-    <table>
-        <tr><th>Lead</th><th>Categoría</th><th>Fecha</th><th>Intervención</th></tr>
-        @foreach ($replies as $reply)
-            <tr>
-                <td>{{ $reply->lead_id }}</td>
-                <td>{{ $reply->category }}</td>
-                <td>{{ $reply->received_at }}</td>
-                <td>{{ $reply->requires_human ? 'requerida' : 'no' }}</td>
-            </tr>
-        @endforeach
-    </table>
-</section>
+@component('sales.partials.drawer',['drawerId'=>'reply-create','drawerTitle'=>'Registrar respuesta'])
+<form method="post" action="{{ route('replies.store') }}" data-create-form>@csrf<fieldset class="form-group"><legend>Contexto de la conversación</legend><label>Prospecto<select name="lead_id" required>@foreach($leads as $lead)<option value="{{ $lead->id }}">{{ $lead->name }}</option>@endforeach</select></label><label style="margin-top:14px">Contacto asociado<select name="contact_attempt_id"><option value="">Sin asociar</option>@foreach($attempts as $attempt)<option value="{{ $attempt->id }}">#{{ $attempt->id }} · {{ $attempt->channel }} · @dateDisplay($attempt->performed_at)</option>@endforeach</select></label><div style="margin-top:14px">@include('sales.partials.campaign-select',['selectedCampaignId'=>null])</div></fieldset><fieldset class="form-group"><legend>Respuesta recibida</legend><div class="grid"><label>Categoría<select name="category" required>@foreach($categories as $category)<option value="{{ $category }}">{{ $replyLabels[$category] ?? $category }}</option>@endforeach</select></label><label>Fecha<input type="datetime-local" name="received_at" value="{{ now()->timezone($preferences['timezone'])->format('Y-m-d\TH:i') }}" required></label></div><label>Texto recibido<textarea name="body" placeholder="Registrá la respuesta o un resumen útil"></textarea></label></fieldset><div class="form-footer"><button type="button" class="secondary" data-drawer-close>Cancelar</button><button @disabled($leads->isEmpty())>Registrar respuesta</button></div></form>
+@endcomponent
 @endsection
-

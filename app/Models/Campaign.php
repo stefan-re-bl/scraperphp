@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Campaign extends Model
 {
@@ -24,6 +25,11 @@ class Campaign extends Model
     public function offer()
     {
         return $this->belongsTo(Offer::class);
+    }
+
+    public function leads(): BelongsToMany
+    {
+        return $this->belongsToMany(Lead::class)->withPivot(['id', 'offer_id', 'status', 'next_action_at', 'interested_at', 'won_at', 'lost_at'])->withTimestamps();
     }
 
     public function queries()

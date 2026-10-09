@@ -1,36 +1,10 @@
 @extends('layouts.app')
-
 @section('content')
-<section>
-    <h1>Ofertas</h1>
-    <form method="post" action="/offers">
-        @csrf
-        <div class="grid">
-            <label>Nombre<input name="name" required></label>
-            <label>Cliente objetivo<input name="target_customer"></label>
-            <label>Segmento<input name="segment"></label>
-            <label>Demo<input name="demo_url"></label>
-            <label>Portfolio<input name="portfolio_url"></label>
-            <label>CTA sugerido<input name="suggested_cta"></label>
-        </div>
-        <label>Problemas<textarea name="pains"></textarea></label>
-        <label>Beneficios<textarea name="benefits"></textarea></label>
-        <label>Señales compatibles<textarea name="compatibility_signals"></textarea></label>
-        <label>Activos<textarea name="assets"></textarea></label>
-        <button>Crear oferta</button>
-    </form>
-</section>
-
-<section>
-    <table>
-        <tr><th>Nombre</th><th>Cliente</th><th>CTA</th></tr>
-        @foreach ($offers as $offer)
-            <tr>
-                <td>{{ $offer->name }}</td>
-                <td>{{ $offer->target_customer }}</td>
-                <td>{{ $offer->suggested_cta }}</td>
-            </tr>
-        @endforeach
-    </table>
-</section>
+<div class="page-head"><div><span class="eyebrow">Tu propuesta comercial</span><h1>Ofertas</h1><p class="muted">Definí qué ofrecés, a quién y con qué evidencia de encaje.</p></div><button type="button" data-drawer-open="offer-create">@include('sales.partials.icon',['name'=>'plus']) Nueva oferta</button></div>
+@if($offers->isEmpty())<section>@include('sales.partials.empty-state',['emptyIcon'=>'tag','emptyTitle'=>'Definí tu primera oferta','emptyText'=>'Reuní los beneficios, el cliente objetivo y los materiales que usás para presentar tu servicio.','emptyDrawer'=>'offer-create','emptyButton'=>'Crear oferta'])</section>@endif
+<div class="grid">@foreach($offers as $offer)<section><div class="section-head"><h2 style="margin:0">{{ $offer->name }}</h2>@include('sales.partials.status-badge',['status'=>$offer->active ? 'available' : 'archived'])</div><p class="muted">{{ $offer->segment ?: $offer->target_customer ?: 'Oferta general' }}</p><p style="font-size:12px;color:#62738d">{{ Illuminate\Support\Str::limit($offer->benefits ?: $offer->pains ?: 'Completá los beneficios y el encaje de esta oferta.',150) }}</p><button type="button" class="light" data-drawer-open="offer-edit-{{ $offer->id }}">@include('sales.partials.icon',['name'=>'edit']) Editar oferta</button></section>@endforeach</div>
+@component('sales.partials.drawer',['drawerId'=>'offer-create','drawerTitle'=>'Crear oferta'])<form method="post" action="{{ route('offers') }}" data-create-form>@csrf @include('sales.partials.offer-form',['editingOffer'=>null])<div class="form-footer"><button type="button" class="secondary" data-drawer-close>Cancelar</button><button>Crear oferta</button></div></form>@endcomponent
+@foreach($offers as $offer)
+@component('sales.partials.drawer',['drawerId'=>'offer-edit-'.$offer->id,'drawerTitle'=>'Editar oferta','drawerEyebrow'=>$offer->name])<form method="post" action="{{ route('offers.update',$offer) }}">@csrf @method('PUT') @include('sales.partials.offer-form',['editingOffer'=>$offer])<div class="form-footer"><button type="button" class="secondary" data-drawer-close>Cancelar</button><button>Guardar cambios</button></div></form>@endcomponent
+@endforeach
 @endsection

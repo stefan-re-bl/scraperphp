@@ -1,117 +1,46 @@
 @extends('layouts.app')
-
 @section('content')
-<div class="page-head">
-    <div>
-        <div class="muted"><a href="/leads">Leads</a> → {{ $lead->name }}</div>
-        <h1>{{ $lead->name }}</h1>
-        <p class="muted">{{ $lead->category }} · {{ $lead->location }} · {{ $lead->country }}</p>
-    </div>
-    <div class="actions">
-        @if ($lead->website_url)<a class="button light" href="{{ $lead->website_url }}" target="_blank" rel="noreferrer">Abrir sitio</a>@endif
-        @if ($lead->email)<a class="button light" href="mailto:{{ $lead->email }}">Copiar email</a>@endif
-        @if ($lead->phone)<a class="button light" href="tel:{{ $lead->phone }}">Copiar teléfono</a>@endif
-        <a class="button secondary" href="/contact-queue?lead={{ $lead->id }}">Enviar a cola</a>
-    </div>
-</div>
-
-@if ($lead->duplicate_status === 'possible_duplicate')
-    <section>
-        <h2>Posible duplicado</h2>
-        <p>Posible relación con <a href="/leads/{{ $lead->possibleDuplicateOf?->id }}">{{ $lead->possibleDuplicateOf?->name ?? 'otro lead' }}</a>.</p>
-        <div class="grid">
-            <div class="kpi"><div class="muted">Regla</div>{{ $lead->duplicate_rule }}</div>
-            <div class="kpi"><div class="muted">Dominio</div>{{ $lead->domain ?? 'No disponible' }}</div>
-            <div class="kpi"><div class="muted">Teléfono</div>{{ $lead->phone ?? 'No disponible' }}</div>
-        </div>
-        <p class="muted">No se combinan automáticamente. Revisa ambos leads antes de contactar.</p>
-    </section>
-@endif
-
-<div class="two-col">
-    <div>
+<div class="page-head"><div><span class="eyebrow"><a href="{{ route('leads') }}">Prospectos</a> / Ficha del contacto</span></div><button type="button" class="light" data-drawer-open="lead-edit">@include('sales.partials.icon',['name'=>'edit']) Editar datos y notas</button></div>
+<div class="lead-header"><span class="avatar">{{ mb_strtoupper(mb_substr($lead->name,0,1)) }}</span><div class="lead-header-content"><h1>{{ $lead->name }}</h1><p>{{ $lead->category ?: 'Sin categoría' }}@if($lead->city || $lead->location) · {{ $lead->city ?: $lead->location }} @endif @if($lead->country) · {{ $lead->country }} @endif</p><div class="lead-tags">@include('sales.partials.status-badge',['status'=>$lead->excluded_at ? 'excluded' : $lead->status])<span class="lead-relation-pill">{{ ['prospect'=>'Cliente potencial','collaborator'=>'Colaborador','customer'=>'Cliente'][$lead->relationship_type] ?? 'Cliente potencial' }}</span>@foreach($lead->tags ?? [] as $tag)<span class="badge">{{ $tag }}</span>@endforeach</div><div class="lead-contact-summary">@if($lead->contact_person)<span>@include('sales.partials.icon',['name'=>'people']) {{ $lead->contact_person }}@if($lead->contact_role) · {{ $lead->contact_role }} @endif</span>@endif @if($lead->email)<span>@include('sales.partials.icon',['name'=>'mail']) {{ $lead->email }}</span>@endif @if($lead->phone)<span>@include('sales.partials.icon',['name'=>'phone']) {{ $lead->phone }}</span>@endif</div></div><a class="button" href="{{ route('queue',['lead'=>$lead->id]) }}">Abrir cola enfocada @include('sales.partials.icon',['name'=>'arrow'])</a></div>
+@if($lead->excluded_at)<div class="error"><strong>Este prospecto está excluido</strong><p>{{ $lead->exclusion_reason }}</p><p>Eliminá las coincidencias en <a href="{{ route('exclusions') }}">Exclusiones</a> antes de confirmar la revisión.</p><form method="post" action="{{ route('leads.restore-contactability',$lead) }}">@csrf<button class="danger">Confirmar revisión y habilitar</button></form></div>@endif
+@if($lead->duplicate_status==='possible_duplicate')<section><div class="section-head"><h2>Posible duplicado</h2><span class="badge warn">Necesita revisión</span></div><p class="muted">Hay una posible relación con @if($lead->possibleDuplicateOf)<a href="{{ route('leads.show',$lead->possibleDuplicateOf) }}">{{ $lead->possibleDuplicateOf->name }}</a>@else otro prospecto @endif. Revisá los registros antes de contactar.</p><form method="post" action="{{ route('leads.distinct',$lead) }}">@csrf<button class="secondary">Confirmar que son negocios distintos</button></form></section>@endif
+<div class="tabs"><a href="#lead-activity" class="active">Actividad</a><a href="#lead-evidence">Evidencia</a><a href="#lead-opportunities">Oportunidades</a></div>
+<div class="two-col lead-detail-grid"><div>
+<section id="lead-activity"><div class="section-head"><div><h2>Historial de actividad</h2><p class="muted">Contactos, respuestas y avances en orden cronológico.</p></div><span class="badge">{{ $timeline->count() }} {{ $timeline->count()===1 ? 'evento' : 'eventos' }}</span></div><div class="timeline">@forelse($timeline as $event)<div class="timeline-item"><span class="timeline-symbol">@include('sales.partials.icon',['name'=>'clock'])</span><strong>{{ $event['title'] }}</strong><div class="muted">@dateDisplay($event['at'])</div><div>{{ $event['detail'] }}</div></div>@empty @include('sales.partials.empty-state',['emptyIcon'=>'clock','emptyTitle'=>'Todavía no hay actividad','emptyText'=>'Los contactos, respuestas y cambios que registres aparecerán acá.']) @endforelse</div></section>
+<section><div class="section-head"><h2>Datos del contacto</h2><button type="button" class="icon-button" data-drawer-open="lead-edit" aria-label="Editar identidad">@include('sales.partials.icon',['name'=>'edit'])</button></div><dl class="identity-list"><div><dt>Email</dt><dd>{{ $lead->email ?? 'Sin registrar' }}</dd></div><div><dt>Teléfono</dt><dd>{{ $lead->phone ?? 'Sin registrar' }}</dd></div><div><dt>Sitio web</dt><dd>@if($lead->website_url)<a href="{{ $lead->website_url }}" target="_blank" rel="noreferrer">{{ $lead->domain ?: $lead->website_url }}</a>@else Sin registrar @endif</dd></div><div><dt>Fuente</dt><dd>{{ ['manual'=>'Manual','google_maps'=>'Google Maps','csv_manual'=>'CSV','referral'=>'Referido','web'=>'Web'][$lead->source] ?? $lead->source }}</dd></div><div><dt>Dirección</dt><dd>{{ $lead->location ?: 'Sin registrar' }}</dd></div><div><dt>Persona de contacto</dt><dd>{{ $lead->contact_person ?: 'Sin registrar' }}</dd></div></dl><div class="contact-pills">@if($lead->email)<button type="button" class="light" data-copy="{{ $lead->email }}">@include('sales.partials.icon',['name'=>'copy']) Copiar email</button><a class="button light" href="mailto:{{ $lead->email }}">Abrir email</a>@endif @if($lead->phone)<button type="button" class="light" data-copy="{{ $lead->phone }}">Copiar teléfono</button><a class="button light" href="tel:{{ $lead->phone }}">Llamar</a>@endif @if($lead->website_url)<a class="button light" href="{{ $lead->website_url }}" target="_blank" rel="noreferrer">Abrir sitio</a>@endif</div>@if($lead->notes)<div class="panel-note"><strong>Notas</strong><p style="margin:5px 0 0;white-space:pre-wrap">{{ $lead->notes }}</p></div>@endif</section>
+<section id="lead-evidence"><div class="section-head"><div><h2>Evidencia comercial</h2><p class="muted">Separá lo observado de lo que todavía necesita revisión.</p></div></div>@forelse($lead->signalRows as $signal)<div @class(['card','evidence-card','pending'=>$signal->review_status==='pending','rejected'=>$signal->review_status==='rejected'])><div class="section-head" style="margin-bottom:8px"><strong>{{ App\Models\Signal::label($signal->type) }}</strong>@include('sales.partials.status-badge',['status'=>$signal->review_status])</div><p style="font-size:12px;margin:0">{{ $signal->evidence }}</p><div class="muted">{{ $signal->evidence_kind==='observed' ? 'Observada' : 'Inferida' }} · @dateDisplay($signal->detected_at) @if($signal->evidence_url) · <a href="{{ $signal->evidence_url }}" target="_blank" rel="noreferrer">Ver evidencia</a>@endif</div><form method="post" action="{{ route('leads.signals.review',[$lead,$signal]) }}">@csrf @method('PATCH')<select name="review_status" aria-label="Revisión de {{ App\Models\Signal::label($signal->type) }}"><option value="confirmed" @selected($signal->review_status==='confirmed')>Confirmar</option><option value="pending" @selected($signal->review_status==='pending')>Dejar pendiente</option><option value="rejected" @selected($signal->review_status==='rejected')>Descartar</option></select><button class="secondary">Guardar revisión</button></form></div>@empty @include('sales.partials.empty-state',['emptyIcon'=>'tag','emptyTitle'=>'No hay evidencia registrada','emptyText'=>'Agregá lo observado o solicitá una revisión del sitio desde las acciones de esta ficha.']) @endforelse</section>
+<section id="lead-opportunities"><div class="section-head"><h2>Oportunidades por campaña</h2><span class="badge">{{ $lead->campaigns->count() }}</span></div>@forelse($lead->campaigns as $membership)<div class="card opportunity-card"><div><strong><a href="{{ route('campaigns.show',$membership) }}">{{ $membership->name }}</a></strong><div style="margin-top:7px">@include('sales.partials.status-badge',['status'=>$membership->pivot->status])</div></div><form method="post" action="{{ route('leads.status',$lead) }}">@csrf<input type="hidden" name="campaign_id" value="{{ $membership->id }}"><input type="hidden" name="status" value="QUEUED"><input type="hidden" name="reason" value="Cola desde ficha"><button class="small secondary">Enviar a cola</button><a class="button small light" href="{{ route('queue',['campaign'=>$membership->id,'lead'=>$lead->id]) }}">Abrir trabajo</a></form></div>@empty<p class="muted">Vinculá una campaña para organizar esta oportunidad.</p>@endforelse
+<details style="margin-top:18px"><summary>Vincular otra campaña</summary><form method="post" action="{{ route('leads.campaigns.store',$lead) }}">@csrf<input type="hidden" name="lead_id" value="{{ $lead->id }}"><label>Campaña<select name="campaign_id" required><option value="">Seleccionar campaña</option>@foreach($campaigns->whereNotIn('id',$lead->campaigns->modelKeys()) as $option)<option value="{{ $option->id }}">{{ $option->name }}</option>@endforeach</select></label><button class="secondary">Vincular campaña</button></form></details></section>
+</div><div>
+<div class="next-action"><span class="eyebrow">Próxima acción</span>@if($lead->excluded_at)<strong>Revisar la exclusión</strong><p>Este contacto necesita una revisión antes de habilitarlo.</p>@elseif($lead->next_action_at)<strong>@dateDisplay($lead->next_action_at)</strong><p>El contacto aparecerá en la cola cuando corresponda.</p>@else<strong>Definí el próximo paso</strong><p>Podés registrar un contacto o revisar una oportunidad.</p>@endif</div>
+<section><h2>Prioridad y encaje</h2><div class="section-head"><span class="metric" style="margin:0">{{ $lead->score_total }}</span><span class="badge">{{ $lead->score_total>=60 ? 'Prioridad alta' : ($lead->score_total>=35 ? 'Prioridad media' : 'Prioridad baja') }}</span></div><div class="grid diagnosis-grid"><div class="kpi"><span class="muted">Datos</span><div style="font-weight:650;margin-top:4px">{{ $lead->data_quality_score }}</div></div><div class="kpi"><span class="muted">Contacto</span><div style="font-weight:650;margin-top:4px">{{ $lead->contactability_score }}</div></div><div class="kpi"><span class="muted">Encaje</span><div style="font-weight:650;margin-top:4px">{{ $lead->offer_fit_score }}</div></div></div><p class="form-help" style="margin-top:14px">Oferta sugerida: <strong>{{ $lead->suggestedOffer?->name ?? 'Sin oferta' }}</strong></p><p class="form-help">{{ $lead->offer_match_reason }}</p><details style="margin-top:16px"><summary>Ver componentes de la prioridad</summary><table class="compact-table" data-static-table><tr><th>Componente</th><th>Puntos</th></tr>@foreach($lead->scoreComponents as $component)<tr><td>{{ App\Services\LeadScorer::DEFAULTS[$component->component][2] ?? str_replace('_',' ',$component->component) }}<div class="muted">{{ $component->evidence }}</div></td><td>{{ $component->points }}</td></tr>@endforeach</table></details></section>
+<div class="action-forms">
+        <section><details><summary>@include('sales.partials.icon',['name'=>'tag']) Evidencia comercial</summary><form method="post" action="{{ route('leads.signals.store', $lead) }}">@csrf
+        <label>Señal<select name="type"><option value="ads_active">Invierte en captación</option><option value="clear_offer">Oferta clara</option><option value="observed_problem">Problema observado</option></select></label>
+        <label>Evidencia<textarea name="evidence" required></textarea></label><label>Enlace<input type="url" name="evidence_url"></label>
+        <label>Tipo<select name="evidence_kind"><option value="observed">Observada</option><option value="inferred">Inferida</option></select></label>
+        <label>Revisión<select name="review_status"><option value="confirmed">Confirmada</option><option value="pending">Pendiente</option></select></label><button>Guardar evidencia</button></form>
+        @if ($lead->signalRows->contains('type', 'channel_email_visible'))<form method="post" action="{{ route('leads.email.confirm', $lead) }}">@csrf<button class="secondary">Usar email detectado en la web</button></form>@endif
+        <form method="post" action="{{ route('leads.enrich', $lead) }}">@csrf<button class="secondary">Volver a revisar sitio</button></form></details></section>
         <section>
-            <h2>Identidad</h2>
-            <div class="grid">
-                <div class="kpi"><div class="muted">Website</div>{{ $lead->website_url ?? 'No disponible' }}</div>
-                <div class="kpi"><div class="muted">Email</div>{{ $lead->email ?? 'No disponible' }}</div>
-                <div class="kpi"><div class="muted">Teléfono</div>{{ $lead->phone ?? 'No disponible' }}</div>
-                <div class="kpi"><div class="muted">Fuente</div>{{ $lead->source }}<br><span class="muted">{{ $lead->source_identifier }}</span></div>
-            </div>
-        </section>
-
-        <section>
-            <h2>Diagnóstico</h2>
-            <div class="kpis">
-                <div class="kpi"><div class="muted">Score</div><div class="metric">{{ $lead->score_total }}</div></div>
-                <div class="kpi"><div class="muted">Estado</div><span class="badge">{{ $lead->status }}</span></div>
-                <div class="kpi"><div class="muted">Oferta sugerida</div>{{ $lead->suggestedOffer?->name ?? 'Sin oferta' }}</div>
-            </div>
-            <h3>Componentes del score</h3>
-            <table>
-                <tr><th>Componente</th><th>Puntos</th><th>Evidencia</th></tr>
-                @foreach ($lead->scoreComponents as $component)
-                    <tr><td>{{ $component->component }}</td><td>{{ $component->points }}</td><td>{{ $component->evidence }}</td></tr>
-                @endforeach
-            </table>
-            <h3>Señales</h3>
-            @forelse ($lead->signalRows as $signal)
-                <div class="card">
-                    <strong>{{ $signal->type }}</strong> {{ $signal->value }}
-                    <div class="muted">{{ $signal->evidence }}</div>
-                </div>
-            @empty
-                <div class="empty">No hay señales registradas.</div>
-            @endforelse
-        </section>
-
-        <section>
-            <h2>Actividad</h2>
-            <div class="timeline">
-                @if ($lead->acquired_at)
-                    <div class="timeline-item"><strong>Adquirido</strong><div class="muted">{{ $lead->acquired_at }}</div></div>
-                @endif
-                @if ($lead->enriched_at)
-                    <div class="timeline-item"><strong>Enriquecido</strong><div class="muted">{{ $lead->enriched_at }}</div></div>
-                @endif
-                @foreach ($lead->sources as $source)
-                    <div class="timeline-item"><strong>Fuente registrada</strong><div class="muted">{{ $source->query }} · {{ $source->observed_at }}</div></div>
-                @endforeach
-                @foreach ($lead->contactAttempts as $attempt)
-                    <div class="timeline-item"><strong>{{ $attempt->step }}</strong><div class="muted">{{ $attempt->channel }} · {{ $attempt->status }} · {{ $attempt->performed_at ?? $attempt->due_at }}</div></div>
-                @endforeach
-                @foreach ($lead->replies as $reply)
-                    <div class="timeline-item"><strong>Respuesta {{ $reply->category }}</strong><div class="muted">{{ $reply->received_at }}</div><div>{{ $reply->body }}</div></div>
-                @endforeach
-                @foreach ($lead->proposals as $proposal)
-                    <div class="timeline-item"><strong>Propuesta {{ $proposal->result ?? 'pending' }}</strong><div class="muted">{{ $proposal->service }} · {{ $proposal->amount }} {{ $proposal->currency }}</div></div>
-                @endforeach
-                @foreach ($lead->statusHistories as $history)
-                    <div class="timeline-item"><strong>Estado {{ $history->to_status }}</strong><div class="muted">{{ $history->reason }} · {{ $history->changed_at }}</div></div>
-                @endforeach
-            </div>
-        </section>
-    </div>
-
-    <div>
-        <section>
-            <h2>Acciones</h2>
+            <details><summary>@include('sales.partials.icon',['name'=>'settings']) Acciones</summary>
             <form method="post" action="/leads/{{ $lead->id }}/status">
                 @csrf
                 <label>Estado
                     <select name="status">
                         @foreach ($statuses as $status)
-                            <option value="{{ $status }}" @selected($lead->status === $status)>{{ $status }}</option>
+                            <option value="{{ $status }}" @selected($lead->status === $status)>{{ App\Models\Lead::statusLabel($status) }}</option>
                         @endforeach
                     </select>
                 </label>
-                <label>Motivo<input name="reason" value="lead_detail"></label>
+                @include('sales.partials.campaign-select', ['selectedCampaignId' => null])
+                <label>Motivo<input name="reason" value="Cambio manual"></label>
                 <button>Actualizar estado</button>
             </form>
-        </section>
+        </details></section>
 
         <section>
-            <h2>Registrar contacto</h2>
+            <details><summary>@include('sales.partials.icon',['name'=>'phone']) Registrar contacto</summary>
             <form method="post" action="/contact-attempts">
                 @csrf
                 <input type="hidden" name="lead_id" value="{{ $lead->id }}">
@@ -125,20 +54,21 @@
                     </label>
                     <label>Canal<input name="channel" value="email" required></label>
                     <label>Paso
-                        <select name="step"><option value="initial">initial</option><option value="follow_up_1">follow_up_1</option><option value="follow_up_2">follow_up_2</option><option value="closed">closed</option></select>
+                        <select name="step"><option value="initial">Contacto inicial</option><option value="follow_up_1">Seguimiento 1</option><option value="follow_up_2">Seguimiento 2</option><option value="closed">Otro contacto</option></select>
                     </label>
-                    <label>Fecha realizada<input type="datetime-local" name="performed_at" value="{{ now()->format('Y-m-d\TH:i') }}"></label>
+                    <label>Fecha realizada<input type="datetime-local" name="performed_at" value="{{ now()->timezone($preferences['timezone'])->format('Y-m-d\TH:i') }}"></label>
                 </div>
                 <label>Mensaje<textarea name="message_snapshot"></textarea></label>
                 <button>Registrar contacto</button>
             </form>
-        </section>
+        </details></section>
 
         <section>
-            <h2>Registrar respuesta</h2>
+            <details><summary>@include('sales.partials.icon',['name'=>'reply']) Registrar respuesta</summary>
             <form method="post" action="/replies">
                 @csrf
                 <input type="hidden" name="lead_id" value="{{ $lead->id }}">
+                @include('sales.partials.campaign-select', ['selectedCampaignId' => null])
                 <label>Categoría
                     <select name="category">
                         @foreach ($categories as $category)
@@ -146,30 +76,33 @@
                         @endforeach
                     </select>
                 </label>
-                <label>Fecha<input type="datetime-local" name="received_at" value="{{ now()->format('Y-m-d\TH:i') }}" required></label>
+                <label>Fecha<input type="datetime-local" name="received_at" value="{{ now()->timezone($preferences['timezone'])->format('Y-m-d\TH:i') }}" required></label>
                 <label>Texto<textarea name="body"></textarea></label>
                 <button>Registrar respuesta</button>
             </form>
-        </section>
+        </details></section>
 
         <section>
-            <h2>Registrar propuesta</h2>
+            <details><summary>@include('sales.partials.icon',['name'=>'proposal']) Registrar propuesta</summary>
             <form method="post" action="/proposals">
                 @csrf
                 <input type="hidden" name="lead_id" value="{{ $lead->id }}">
+                @include('sales.partials.campaign-select', ['selectedCampaignId' => null])
                 <label>Servicio<input name="service" value="{{ $lead->suggestedOffer?->name ?? 'Servicio' }}" required></label>
                 <div class="grid">
                     <label>Importe<input type="number" step="0.01" name="amount"></label>
-                    <label>Moneda<input name="currency" value="USD" maxlength="3" required></label>
+                    <label>Moneda<input name="currency" value="{{ $preferences['currency'] }}" maxlength="3" required></label>
                     <label>Versión<input type="number" name="version" value="1" min="1" required></label>
                     <label>Resultado
                         <select name="result"><option value="pending">Pendiente</option><option value="won">Ganada</option><option value="lost">Perdida</option></select>
                     </label>
                 </div>
-                <label>Fecha<input type="datetime-local" name="sent_at" value="{{ now()->format('Y-m-d\TH:i') }}"></label>
+                <label>Fecha<input type="datetime-local" name="sent_at" value="{{ now()->timezone($preferences['timezone'])->format('Y-m-d\TH:i') }}"></label>
                 <button>Registrar propuesta</button>
             </form>
-        </section>
-    </div>
-</div>
+        </details></section>
+</div></div></div>
+@component('sales.partials.drawer',['drawerId'=>'lead-edit','drawerTitle'=>'Editar prospecto','drawerEyebrow'=>$lead->name])
+<form method="post" action="{{ route('leads.update',$lead) }}">@csrf @method('PUT') @include('sales.partials.lead-form',['editingLead'=>$lead])<div class="form-footer"><button type="button" class="secondary" data-drawer-close>Cancelar</button><button>Guardar datos</button></div></form>
+@endcomponent
 @endsection

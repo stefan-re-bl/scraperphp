@@ -33,6 +33,9 @@ class LeadEnricher
     public function enrich(Lead $lead): Lead
     {
         $signals = [];
+        $lead->signalRows()->whereIn('source', ['website', 'system'])->delete();
+        $lead->booking_visible = false;
+        $lead->primary_cta = null;
         $contactMethods = $this->baseContactMethods($lead);
         $socialUrls = $lead->social_urls ?? [];
 
@@ -47,23 +50,23 @@ class LeadEnricher
                 $this->addSignal($lead, $signals, 'no_https', 'true', $url, 'website');
             }
 
-            if (app()->environment('testing')) {
-                $lead->primary_cta = null;
-            } else {
-                try {
-                    $response = Http::timeout(8)->get($url);
-                    $analysis = $this->analyzeWebsiteContent($lead, $url, (string) $response->body(), $response->successful(), $response->status());
-                    $signals = array_merge($signals, $analysis['score_signals']);
-                    $contactMethods = array_values(array_unique(array_merge($contactMethods, $analysis['contact_methods'])));
-                    $socialUrls = array_merge($socialUrls, $analysis['social_urls']);
-                } catch (\Throwable $exception) {
-                    $this->addSignal($lead, $signals, 'website_unreachable', 'error', $exception->getMessage(), 'website');
+            try {
+                $host = parse_url($url, PHP_URL_HOST);
+                if ($host === 'localhost' || (filter_var($host, FILTER_VALIDATE_IP) && ! filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE))) {
+                    throw new \RuntimeException('La dirección no es un sitio público.');
                 }
+                $response = Http::timeout(8)->withOptions(['allow_redirects' => false])->get($url);
+                $analysis = $this->analyzeWebsiteContent($lead, $url, (string) $response->body(), $response->successful(), $response->status());
+                $signals = array_merge($signals, $analysis['score_signals']);
+                $contactMethods = array_values(array_unique(array_merge($contactMethods, $analysis['contact_methods'])));
+                $socialUrls = $analysis['social_urls'];
+            } catch (\Throwable $exception) {
+                $this->signal($lead, 'website_unreachable', 'unknown', $exception->getMessage(), 'website');
             }
         }
 
-        if ($lead->phone && ! $lead->booking_visible) {
-            $this->addSignal($lead, $signals, 'manual_contact_dependency', 'true', 'Tiene teléfono y no hay sistema de reserva visible.', 'system');
+        if ($lead->phone && ! $lead->booking_visible && $this->containsAny(mb_strtolower((string) $lead->category), ['psic', 'consultorio', 'terap', 'salud'])) {
+            $this->signal($lead, 'manual_contact_dependency', 'unknown', 'La modalidad de reserva necesita revisión manual.', 'system');
         }
 
         if (! $lead->email && ! $lead->phone) {
@@ -73,7 +76,7 @@ class LeadEnricher
         $lead->forceFill([
             'contact_methods' => array_values(array_unique($contactMethods)),
             'social_urls' => array_filter($socialUrls),
-            'signals' => array_values(array_unique(array_merge($lead->signals ?? [], $signals))),
+            'signals' => array_values(array_unique(array_merge($lead->signalRows()->where('review_status', '!=', 'rejected')->pluck('type')->all(), $signals))),
             'enriched_at' => Carbon::now(),
         ])->save();
 
@@ -82,6 +85,10 @@ class LeadEnricher
 
     public function analyzeWebsiteContent(Lead $lead, string $url, string $html, bool $successful = true, ?int $status = null): array
     {
+        $lead->signalRows()->where('source', 'website')->delete();
+        $lead->booking_visible = false;
+        $lead->primary_cta = null;
+        $lead->save();
         $signals = [];
         $contactMethods = [];
         $socialUrls = [];
@@ -89,9 +96,13 @@ class LeadEnricher
         $raw = mb_strtolower(substr($html, 0, 120000));
 
         if (! $successful) {
-            $this->addSignal($lead, $signals, 'website_unreachable', (string) $status, $url, 'website');
+            $this->signal($lead, 'website_unreachable', (string) $status, 'No se pudo verificar el contenido de esta página.', 'website');
+
+            return ['score_signals' => [], 'contact_methods' => [], 'social_urls' => []];
         }
 
+        $lead->booking_visible = false;
+        $lead->primary_cta = null;
         $booking = $this->containsAny($body, ['turno', 'reserva', 'agenda']);
         $systems = $this->bookingSystems($raw);
         $visibleBooking = $systems !== [] || $this->containsAny($body, ['reservar online', 'agenda online', 'turno online']);
@@ -212,6 +223,9 @@ class LeadEnricher
             'evidence' => $evidence,
             'source' => $source,
             'detected_at' => Carbon::now(),
+            'evidence_kind' => in_array($type, ['manual_contact_dependency', 'no_visible_booking', 'weak_website_content', 'website_unreachable']) ? 'inferred' : 'observed',
+            'review_status' => in_array($type, ['manual_contact_dependency', 'no_visible_booking', 'weak_website_content', 'website_unreachable']) ? 'pending' : 'confirmed',
+            'evidence_url' => $source === 'website' ? $lead->website_url : null,
         ]);
     }
 

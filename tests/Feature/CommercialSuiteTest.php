@@ -130,7 +130,7 @@ class CommercialSuiteTest extends TestCase
             ->assertOk()
             ->assertSee('Consultorio Norte')
             ->assertDontSee('Otro rubro')
-            ->assertSee('Exportar vista actual CSV');
+            ->assertSee('CSV de esta vista');
     }
 
     public function test_filtered_lead_export_does_not_include_leads_outside_filter(): void
@@ -273,13 +273,13 @@ class CommercialSuiteTest extends TestCase
 
         $this->get("/campaigns/{$campaign->id}")
             ->assertOk()
-            ->assertSee('Obtener leads')
-            ->assertSee('Revisar leads');
+            ->assertSee('Obtener prospectos')
+            ->assertSee('Revisar prospectos');
 
         $this->get("/campaigns/{$campaign->id}?tab=leads&possible_duplicate=1")
             ->assertOk()
             ->assertSee('Sucursal Norte')
-            ->assertSee('possible_duplicate');
+            ->assertSee('Revisar duplicado');
     }
 
     public function test_bulk_action_sends_selected_leads_to_queue(): void

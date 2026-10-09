@@ -34,7 +34,7 @@
                     <form method="post" action="/scraper/run">
                         @csrf
                         <input type="hidden" name="campaign_query_id" value="{{ $query->id }}">
-                        <label><input type="checkbox" name="dry_run" value="1" checked> Dry-run</label>
+                        <input type="hidden" name="dry_run" value="0"><label><input type="checkbox" name="dry_run" value="1" checked> Simular</label>
                         <button>Ejecutar</button>
                     </form>
                 </td>
@@ -44,20 +44,12 @@
 </section>
 
 <section>
-    <h2>Runs</h2>
-    <table>
-        <tr><th>ID</th><th>Estado</th><th>Query</th><th>Archivo</th><th>Importados</th><th>Errores</th></tr>
-        @foreach ($runs as $run)
-            <tr>
-                <td>{{ $run->id }}</td>
-                <td>{{ $run->status }}</td>
-                <td>{{ $run->query }}</td>
-                <td>{{ $run->output_file }}</td>
-                <td>{{ $run->imported_count }}</td>
-                <td>{{ $run->error_count }}</td>
-            </tr>
-        @endforeach
-    </table>
+    <h2>Búsquedas</h2><div class="table-wrap"><table><tr><th>Búsqueda</th><th>Estado</th><th>Etapa</th><th>Importados</th><th>Errores</th><th>Acciones</th></tr>
+    @foreach ($runs as $run)<tr @if(in_array($run->status, ['queued','running'])) data-run-poll="{{ route('scraper.status', $run) }}" @endif>
+    <td>{{ $run->query }}</td><td data-run-field="status">{{ ['queued'=>'En cola','running'=>'En curso','completed'=>'Completada','failed'=>'Error','cancelled'=>'Cancelada','dry_run'=>'Simulación'][$run->status] ?? $run->status }}</td><td data-run-field="phase">{{ $run->phase }}</td><td data-run-field="imported_count">{{ $run->imported_count }}</td><td data-run-field="error_count">{{ $run->error_count }}</td><td>
+    @if(in_array($run->status, ['queued','running']))<form method="post" action="{{ route('scraper.cancel', $run) }}">@csrf<button class="secondary">Cancelar</button></form>@endif
+    @if(in_array($run->status, ['failed','cancelled']))<form method="post" action="{{ route('scraper.retry', $run) }}">@csrf<button>Reintentar</button></form>@endif
+    @if($run->stderr)<details><summary>Detalle del error</summary><p>{{ $run->stderr }}</p></details>@endif
+    </td></tr>@endforeach</table></div>
 </section>
 @endsection
-

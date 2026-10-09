@@ -4,38 +4,41 @@ namespace App\Services;
 
 use App\Models\Lead;
 use App\Models\MessageTemplate;
+use App\Models\Offer;
 
 class TemplateRenderer
 {
-    public function render(MessageTemplate $template, Lead $lead): array
+    public function select(Lead $lead, string $channel, string $stage, ?int $offerId = null): ?MessageTemplate
     {
-        $offer = $lead->suggestedOffer;
-        $problem = collect($lead->signals ?? [])->first() ?: 'un punto operativo detectado';
-
-        $vars = [
-            'nombre' => $lead->name,
-            'negocio' => $lead->name,
-            'ciudad' => $lead->location,
-            'problema_detectado' => $problem,
-            'oferta' => $offer?->name,
-            'demo' => $offer?->demo_url,
-            'portfolio' => $offer?->portfolio_url,
-            'CTA' => $offer?->suggested_cta ?? 'ver una demo breve',
-            'cta' => $offer?->suggested_cta ?? 'ver una demo breve',
-        ];
-
-        return [
-            'subject' => $this->replace($template->subject ?? '', $vars),
-            'body' => $this->replace($template->body, $vars),
-        ];
+        return MessageTemplate::where('active', true)->where('channel', $channel)->where('stage', $stage)
+            ->where('language', $lead->language)->where(fn ($q) => $q->whereNull('offer_id')->orWhere('offer_id', $offerId ?? $lead->suggested_offer_id))
+            ->where(fn ($q) => $q->whereNull('segment')->orWhere('segment', $lead->segment))
+            ->orderByRaw('case when offer_id is null then 1 else 0 end')->orderByRaw('case when segment is null then 1 else 0 end')->orderBy('id')->first();
     }
 
-    private function replace(string $text, array $vars): string
+    public function render(MessageTemplate $template, Lead $lead, ?Offer $offer = null): array
     {
-        foreach ($vars as $key => $value) {
-            $text = str_replace('{{'.$key.'}}', (string) $value, $text);
-        }
+        $offer ??= $lead->suggestedOffer;
+        $problem = $lead->signalRows()->where('review_status', 'confirmed')->whereIn('type', ['observed_problem', 'weak_cta', 'manual_booking_dependency'])->value('evidence');
+        $variables = ['nombre' => $lead->contact_person ?: $lead->name, 'negocio' => $lead->name,
+            'ciudad' => $lead->city ?: $lead->location, 'problema_detectado' => $problem,
+            'oferta' => $offer?->name, 'demo' => $offer?->demo_url, 'portfolio' => $offer?->portfolio_url,
+            'CTA' => $offer?->suggested_cta, 'cta' => $offer?->suggested_cta];
+        $missing = [];
+        $replace = function (string $text) use ($variables, &$missing): string {
+            return preg_replace_callback('/\{\{\s*([\w]+)\s*\}\}/u', function ($match) use ($variables, &$missing) {
+                if (! filled($variables[$match[1]] ?? null)) {
+                    $missing[] = $match[1];
 
-        return $text;
+                    return $match[0];
+                }
+
+                return (string) $variables[$match[1]];
+            }, $text);
+        };
+        $subject = $replace($template->subject ?? '');
+        $body = $replace($template->body);
+
+        return ['subject' => $subject, 'body' => $body, 'missing' => array_values(array_unique($missing))];
     }
 }

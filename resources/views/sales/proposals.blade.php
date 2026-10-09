@@ -1,51 +1,11 @@
 @extends('layouts.app')
-
 @section('content')
-<section>
-    <h1>Propuestas</h1>
-    <form method="post" action="/proposals">
-        @csrf
-        <div class="grid">
-            <label>Lead
-                <select name="lead_id" required>
-                    @foreach ($leads as $lead)
-                        <option value="{{ $lead->id }}">{{ $lead->name }}</option>
-                    @endforeach
-                </select>
-            </label>
-            <label>Servicio<input name="service" required></label>
-            <label>Importe<input type="number" step="0.01" name="amount"></label>
-            <label>Moneda<input name="currency" value="USD" maxlength="3" required></label>
-            <label>Versión<input type="number" name="version" value="1" min="1" required></label>
-            <label>Fecha<input type="datetime-local" name="sent_at"></label>
-            <label>Resultado
-                <select name="result">
-                    <option value="pending">Pendiente</option>
-                    <option value="won">Ganada</option>
-                    <option value="lost">Perdida</option>
-                </select>
-            </label>
-        </div>
-        <label>Respuesta<textarea name="response"></textarea></label>
-        <label>Objeciones<textarea name="objections"></textarea></label>
-        <label>Modificaciones<textarea name="modifications"></textarea></label>
-        <button>Registrar propuesta</button>
-    </form>
-</section>
-
-<section>
-    <table>
-        <tr><th>Lead</th><th>Servicio</th><th>Importe</th><th>Versión</th><th>Resultado</th></tr>
-        @foreach ($proposals as $proposal)
-            <tr>
-                <td>{{ $proposal->lead_id }}</td>
-                <td>{{ $proposal->service }}</td>
-                <td>{{ $proposal->amount }} {{ $proposal->currency }}</td>
-                <td>{{ $proposal->version }}</td>
-                <td>{{ $proposal->result }}</td>
-            </tr>
-        @endforeach
-    </table>
-</section>
+<div class="page-head"><div><span class="eyebrow">Avance comercial</span><h1>Propuestas</h1><p class="muted">Revisá las versiones, las respuestas y el resultado de cada propuesta.</p></div><button type="button" data-drawer-open="proposal-create" @disabled($leads->isEmpty())>@include('sales.partials.icon',['name'=>'plus']) Nueva propuesta</button></div>
+@if($proposals->isEmpty())<section>@include('sales.partials.empty-state',['emptyIcon'=>'proposal','emptyTitle'=>'Tus propuestas aparecerán acá','emptyText'=>'Registrá una propuesta para seguir su evolución y conservar las versiones.','emptyAction'=>$leads->isEmpty() ? 'Agregar prospecto' : null,'emptyUrl'=>route('leads',['create'=>1]),'emptyDrawer'=>$leads->isNotEmpty() ? 'proposal-create' : null,'emptyButton'=>'Registrar propuesta'])</section>@endif
+@foreach($proposals as $proposal)<section><div class="section-head"><div><h2>{{ $proposal->service }}</h2><p class="muted"><a href="{{ route('leads.show',$proposal->lead_id) }}">{{ $proposal->lead?->name }}</a> · versión {{ $proposal->version }} · @dateDisplay($proposal->sent_at)</p></div>@include('sales.partials.status-badge',['status'=>$proposal->result ?? 'pending'])</div><div class="actions" style="justify-content:space-between"><strong style="font-size:19px;letter-spacing:-.5px">{{ $proposal->amount!==null ? number_format($proposal->amount,2,',','.') .' '. $proposal->currency : 'Importe sin definir' }}</strong><button type="button" class="light" data-drawer-open="proposal-edit-{{ $proposal->id }}">@include('sales.partials.icon',['name'=>'edit']) Editar propuesta</button></div>@if($proposal->response)<p class="panel-note">{{ Illuminate\Support\Str::limit($proposal->response,180) }}</p>@endif</section>@endforeach
+{{ $proposals->links() }}
+@component('sales.partials.drawer',['drawerId'=>'proposal-create','drawerTitle'=>'Registrar propuesta'])<form method="post" action="{{ route('proposals') }}" data-create-form>@csrf @include('sales.partials.proposal-form',['editingProposal'=>null])<div class="form-footer"><button type="button" class="secondary" data-drawer-close>Cancelar</button><button @disabled($leads->isEmpty())>Registrar propuesta</button></div></form>@endcomponent
+@foreach($proposals as $proposal)
+@component('sales.partials.drawer',['drawerId'=>'proposal-edit-'.$proposal->id,'drawerTitle'=>'Editar propuesta','drawerEyebrow'=>$proposal->lead?->name])<form method="post" action="{{ route('proposals.update',$proposal) }}">@csrf @method('PUT') @include('sales.partials.proposal-form',['editingProposal'=>$proposal])<div class="form-footer"><button type="button" class="secondary" data-drawer-close>Cancelar</button><button>Guardar propuesta</button></div></form>@endcomponent
+@endforeach
 @endsection
-

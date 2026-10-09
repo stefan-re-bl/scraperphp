@@ -19,6 +19,7 @@ class LeadFilterService
     public function fromRequest(Request $request): array
     {
         $filters = $request->only([
+            'q', 'relationship_type', 'tag', 'due',
             'campaign',
             'status',
             'segment',
@@ -54,6 +55,7 @@ class LeadFilterService
     {
         $query = Lead::query()
             ->with([
+                'campaigns',
                 'suggestedOffer',
                 'signalRows',
                 'contactAttempts',
@@ -67,23 +69,42 @@ class LeadFilterService
             $query->whereIn('id', $ids);
         }
 
-        if ($campaignId = $filters['campaign'] ?? null) {
-            $query->where(function (Builder $nested) use ($campaignId) {
-                $nested->whereHas('sources.importRun', fn (Builder $source) => $source->where('campaign_id', $campaignId))
-                    ->orWhereHas('contactAttempts', fn (Builder $attempt) => $attempt->where('campaign_id', $campaignId));
+        $campaignId = isset($filters['campaign']) ? (int) $filters['campaign'] : null;
+        if ($campaignId) {
+            $query->inCampaign($campaignId);
+        }
+        if ($status = $filters['status'] ?? null) {
+            if ($campaignId) {
+                $query->where(function ($q) use ($campaignId, $status) {
+                    $q->whereHas('campaigns', fn ($c) => $c->where('campaigns.id', $campaignId)->where('campaign_lead.status', $status))
+                        ->orWhere(fn ($legacy) => $legacy->whereDoesntHave('campaigns')->where('status', $status));
+                });
+            } else {
+                $query->where('status', $status);
+            }
+        }
+        if ($term = $filters['q'] ?? null) {
+            $query->where(function ($q) use ($term) {
+                foreach (['name', 'domain', 'email', 'phone', 'contact_person', 'notes'] as $column) {
+                    $q->orWhere($column, 'like', '%'.$term.'%');
+                }
             });
         }
-
-        if ($status = $filters['status'] ?? null) {
-            $query->where('status', $status);
+        if ($type = $filters['relationship_type'] ?? null) {
+            $query->where('relationship_type', $type);
         }
-
+        if ($tag = $filters['tag'] ?? null) {
+            $query->whereJsonContains('tags', $tag);
+        }
+        if (($filters['due'] ?? null) === '1') {
+            $query->where('next_action_at', '<=', now());
+        }
         if ($segment = $filters['segment'] ?? null) {
             $query->where('segment', 'like', "%{$segment}%");
         }
 
         if ($city = $filters['city'] ?? null) {
-            $query->where('location', 'like', "%{$city}%");
+            $query->where(fn ($q) => $q->where('city', 'like', "%{$city}%")->orWhere('location', 'like', "%{$city}%"));
         }
 
         if ($country = $filters['country'] ?? null) {
@@ -127,7 +148,7 @@ class LeadFilterService
         }
 
         if (($filters['contacted'] ?? null) !== null) {
-            $this->whereRelationExists($query, 'contactAttempts', $filters['contacted'], fn (Builder $attempt) => $attempt->whereNotNull('performed_at'));
+            $this->whereRelationExists($query, 'contactAttempts', $filters['contacted'], fn (Builder $attempt) => $attempt->whereNotNull('performed_at')->where('dry_run', false)->where('status', 'sent')->when($campaignId, fn ($q) => $q->where('campaign_id', $campaignId)));
         }
 
         if (($filters['replied'] ?? null) !== null) {
@@ -136,7 +157,7 @@ class LeadFilterService
 
         foreach (['interested', 'proposal', 'won', 'lost'] as $flag) {
             if (($filters[$flag] ?? null) !== null && $this->truthy($filters[$flag])) {
-                $query->whereIn('status', $this->statusesForFlag($flag));
+                $query->when($campaignId, fn ($q) => $q->whereHas('campaigns', fn ($c) => $c->where('campaigns.id', $campaignId)->whereIn('campaign_lead.status', $this->statusesForFlag($flag))), fn ($q) => $q->whereIn('status', $this->statusesForFlag($flag)));
             }
         }
 

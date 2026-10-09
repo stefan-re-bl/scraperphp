@@ -4,24 +4,18 @@ namespace App\Services;
 
 use App\Models\Campaign;
 use App\Models\ContactAttempt;
-use Illuminate\Support\Carbon;
 
 class LimitService
 {
     public function usage(Campaign $campaign, ?string $channel = null): array
     {
-        $used = ContactAttempt::where('campaign_id', $campaign->id)
-            ->whereDate('performed_at', Carbon::today())
-            ->when($channel, fn ($query) => $query->where('channel', $channel))
-            ->count();
+        $timezone = app(PreferencesService::class)->all()['timezone'];
+        $start = now()->timezone($timezone)->startOfDay()->utc();
+        $end = now()->timezone($timezone)->endOfDay()->utc();
+        $query = ContactAttempt::where('campaign_id', $campaign->id)->where('dry_run', false)->when($channel, fn ($q) => $q->where('channel', $channel));
+        $used = (clone $query)->where('status', 'sent')->whereBetween('performed_at', [$start, $end])->count();
+        $reserved = (clone $query)->where('status', 'sending')->whereBetween('created_at', [$start, $end])->count();
 
-        $limit = $campaign->daily_limit;
-
-        return [
-            'used' => $used,
-            'limit' => $limit,
-            'remaining' => max(0, $limit - $used),
-            'blocked' => $campaign->kill_switch || $used >= $limit,
-        ];
+        return ['used' => $used, 'reserved' => $reserved, 'limit' => $campaign->daily_limit, 'remaining' => max(0, $campaign->daily_limit - $used - $reserved), 'blocked' => $campaign->kill_switch || $campaign->status === 'paused' || $used + $reserved >= $campaign->daily_limit];
     }
 }
