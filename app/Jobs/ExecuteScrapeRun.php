@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\ScrapeRun;
+use App\Services\AcquisitionFailure;
 use App\Services\GoogleMapsScraperService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -25,11 +26,18 @@ class ExecuteScrapeRun implements ShouldQueue
 
     public function handle(GoogleMapsScraperService $scraper): void
     {
-        $scraper->executeRun(ScrapeRun::findOrFail($this->runId));
+        try {
+            $run = $scraper->executeRun(ScrapeRun::findOrFail($this->runId));
+            if ($run->status === 'running') {
+                self::dispatch($run->id)->onQueue($this->queue ?? 'sales')->delay($scraper->retryDelay($run));
+            }
+        } catch (Throwable $exception) {
+            throw AcquisitionFailure::publicException($exception);
+        }
     }
 
     public function failed(?Throwable $exception): void
     {
-        ScrapeRun::whereKey($this->runId)->update(['status' => 'failed', 'phase' => 'failed', 'claimed_at' => null, 'stderr' => $exception?->getMessage(), 'finished_at' => now()]);
+        ScrapeRun::whereKey($this->runId)->whereNotIn('status', ['completed', 'cancelled', 'dry_run'])->where(fn ($query) => $query->whereNull('claimed_at')->orWhere('claimed_at', '<', now()->subSeconds(GoogleMapsScraperService::CLAIM_SECONDS)))->update(['status' => 'failed', 'phase' => 'failed', 'claimed_at' => null, 'claim_token' => null, 'stderr' => AcquisitionFailure::message($exception), 'finished_at' => now()]);
     }
 }

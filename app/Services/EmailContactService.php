@@ -32,6 +32,10 @@ class EmailContactService
         if ($template->offer_id && $template->offer_id !== $offer?->id) {
             throw ValidationException::withMessages(['message_template_id' => 'La plantilla pertenece a otra oferta.']);
         }
+        $preparedTemplate = app(ExperimentService::class)->preparedTemplate($lead, $campaign, 'email', $template->stage, $offer?->id);
+        if ($preparedTemplate?->id === $template->id) {
+            $template = $preparedTemplate;
+        }
         $message = $this->renderer->render($template, $lead, $offer);
         if ($message['missing'] !== []) {
             throw ValidationException::withMessages(['message_template_id' => 'Faltan datos: '.implode(', ', $message['missing'])]);
@@ -57,12 +61,17 @@ class EmailContactService
                 app(CampaignMembership::class)->attach($lead, $campaign);
             }
 
-            return ContactAttempt::create([
+            $created = ContactAttempt::create(array_merge([
                 'lead_id' => $lead->id, 'campaign_id' => $campaign->id, 'message_template_id' => $template->id,
                 'offer_id' => app(CampaignMembership::class)->offer($lead, $campaign)?->id, 'channel' => 'email', 'subject' => $message['subject'], 'step' => $template->stage,
                 'status' => $dryRun ? 'dry_run' : 'sending', 'manual_intervention' => false,
                 'dry_run' => $dryRun, 'message_snapshot' => $message['body'], 'result' => $dryRun ? 'would_send' : null,
-            ]);
+            ], app(ExperimentService::class)->attribution($lead, $campaign, ['message_template_id' => $template->id, 'channel' => 'email', 'step' => $template->stage, 'subject' => $message['subject'], 'message_snapshot' => $message['body']])));
+            if (! $dryRun) {
+                app(ScoreSnapshotService::class)->capture($created);
+            }
+
+            return $created;
         });
         if (! $dryRun) {
             try {

@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Services\NotionValueParser;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Lead extends Model
 {
@@ -28,9 +31,29 @@ class Lead extends Model
 
     protected $guarded = [];
 
+    protected static function booted(): void
+    {
+        static::saving(function (Lead $lead): void {
+            if ($lead->isDirty('relationship_type') && ! $lead->isDirty('is_customer') && ! $lead->isDirty('is_collaborator')) {
+                $lead->is_customer = $lead->relationship_type === 'customer';
+                $lead->is_collaborator = $lead->relationship_type === 'collaborator';
+            }
+            if ($lead->isDirty('is_customer') || $lead->isDirty('is_collaborator')) {
+                $lead->relationship_type = $lead->is_customer ? 'customer' : ($lead->is_collaborator ? 'collaborator' : 'prospect');
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return [
+            'is_customer' => 'boolean',
+            'is_collaborator' => 'boolean',
+            'classification_pending' => 'boolean',
+            'estimated_value_minor' => 'integer',
+            'origin_created_at' => 'datetime',
+            'imported_last_contact_at' => 'datetime',
+            'delivery_due_at' => 'datetime',
             'tags' => 'array',
             'next_action_at' => 'datetime',
             'booking_visible' => 'boolean',
@@ -43,6 +66,26 @@ class Lead extends Model
         ];
     }
 
+    protected function estimatedValue(): Attribute
+    {
+        return Attribute::get(fn (): ?string => NotionValueParser::decimalFromMinor($this->estimated_value_minor));
+    }
+
+    public function contacts(): HasMany
+    {
+        return $this->hasMany(LeadContact::class)->orderByDesc('is_primary')->orderBy('name');
+    }
+
+    public function services(): HasMany
+    {
+        return $this->hasMany(ClientService::class);
+    }
+
+    public function relationshipLabel(): string
+    {
+        return $this->is_customer && $this->is_collaborator ? 'Cliente y colaborador' : ($this->is_customer ? 'Cliente' : ($this->is_collaborator ? 'Colaborador' : 'Prospecto'));
+    }
+
     public function contactAttempts()
     {
         return $this->hasMany(ContactAttempt::class);
@@ -50,7 +93,7 @@ class Lead extends Model
 
     public function campaigns(): BelongsToMany
     {
-        return $this->belongsToMany(Campaign::class)->withPivot(['id', 'offer_id', 'status', 'next_action_at', 'interested_at', 'won_at', 'lost_at'])->withTimestamps();
+        return $this->belongsToMany(Campaign::class)->withPivot(['id', 'offer_id', 'status', 'contact_enabled', 'next_action_at', 'interested_at', 'won_at', 'lost_at'])->withTimestamps();
     }
 
     public function scopeInCampaign(Builder $query, int $campaignId): void
@@ -75,6 +118,11 @@ class Lead extends Model
     public function proposals()
     {
         return $this->hasMany(Proposal::class);
+    }
+
+    public function offerScores(): HasMany
+    {
+        return $this->hasMany(LeadOfferScore::class);
     }
 
     public function scoreComponents()

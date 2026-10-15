@@ -22,11 +22,11 @@
     </form>
 </section>
 
-<section>
+<section data-infinite-list="exclusions">
     <table>
-        <tr><th>Tipo</th><th>Valor</th><th>Motivo</th><th></th></tr>
+        <thead><tr><th>Tipo</th><th>Valor</th><th>Motivo</th><th></th></tr></thead><tbody data-infinite-items>
         @foreach ($exclusions as $exclusion)
-            <tr>
+            <tr data-infinite-item="{{ $exclusion->id }}">
                 <td>{{ $exclusion->type }}</td>
                 <td>{{ $exclusion->value }}</td>
                 <td>{{ $exclusion->reason }}</td>
@@ -39,8 +39,7 @@
                 </td>
             </tr>
         @endforeach
-    </table>
+    </tbody></table>
     {{ $exclusions->links() }}
 </section>
 @endsection
-

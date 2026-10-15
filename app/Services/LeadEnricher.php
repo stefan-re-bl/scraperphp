@@ -3,315 +3,197 @@
 namespace App\Services;
 
 use App\Models\Lead;
-use App\Models\Signal;
-use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\DB;
 
 class LeadEnricher
 {
-    private const BOOKING_SYSTEMS = [
-        'calendly' => ['calendly'],
-        'doctoralia' => ['doctoralia'],
-        'agendapro' => ['agendapro', 'agenda pro'],
-        'turnosweb' => ['turnosweb', 'turnos web'],
-        'bookly' => ['bookly'],
-        'simplybook' => ['simplybook', 'simply book'],
-        'google_calendar' => ['calendar.google', 'google calendar'],
-    ];
+    public function __construct(
+        private readonly PublicWebsiteFetcher $fetcher,
+        private readonly HtmlCommercialExtractor $extractor,
+        private readonly WebsiteDiscovery $discovery,
+        private readonly RobotsPolicy $robots,
+        private readonly EvidenceReconciler $reconciler,
+        private readonly OsmEvidenceSource $osm,
+        private readonly ContactNormalizer $normalizer,
+    ) {}
 
-    private const MANUAL_BOOKING_TERMS = [
-        'turnos por whatsapp',
-        'turno por whatsapp',
-        'pedir turno por whatsapp',
-        'solicitar turno por whatsapp',
-        'llamar para turnos',
-        'turnos al',
-        'agenda por whatsapp',
-        'contactanos para reservar',
-    ];
-
-    public function enrich(Lead $lead): Lead
+    public function enrich(Lead $lead, bool $force = false): Lead
     {
-        $signals = [];
-        $lead->signalRows()->whereIn('source', ['website', 'system'])->delete();
-        $lead->booking_visible = false;
-        $lead->primary_cta = null;
-        $contactMethods = $this->baseContactMethods($lead);
-        $socialUrls = $lead->social_urls ?? [];
+        $lead->refresh();
+        $inputHash = $this->inputHash($lead);
+        $state = DB::table('enrichment_source_states')->where('lead_id', $lead->id)->where('source', 'website')->first();
+        $cached = ! $force && $state && $state->input_sha256 === $inputHash && $state->next_check_at > now()->toDateTimeString();
+        $budget = new EnrichmentRequestBudget($this->fetcher);
+        $observations = $this->baseObservations($lead);
+        $managed = ['import', 'google_maps', 'crm'];
+        $contacts = $this->baseContactMethods($lead);
+        $socials = [];
+        $summary = ['status' => 'unknown', 'pages' => [], 'bytes' => 0, 'page_count' => 0];
+        if (! $cached) {
+            $managed = array_merge($managed, ['website', 'dns_http', 'system']);
+            if (blank($lead->website_url)) {
+                $summary['status'] = 'unregistered';
+            } else {
+                try {
+                    [$url] = $this->fetcher->normalizeUrl($lead->website_url);
+                    $policy = $this->robots->policy($url, $budget);
+                    if (! $policy['available']) {
+                        $observations[] = $this->observation('website_unreachable', 'unknown', 'No se pudo verificar la política de extracción dentro de los límites de seguridad.', 'website', $url, 'robots_policy', 'unknown', 0);
+                    }
+                    $pending = [$url];
+                    $visited = [];
+                    while ($pending !== [] && $budget->pages() < max(1, min(5, (int) config('enrichment.max_pages', 5)))) {
+                        $page = array_shift($pending);
+                        if (isset($visited[$page])) {
+                            continue;
+                        }
+                        $visited[$page] = true;
+                        if (! $this->robots->allows($page, $policy)) {
+                            $observations[] = $this->observation('website_access_restricted', 'unknown', 'La política de extracción no permite verificar esta página.', 'website', $page, 'robots_policy', 'unknown', 0, ['reason' => $policy['status']]);
+                            $summary['pages'][] = ['url' => $page, 'status' => 'restricted'];
 
-        $this->enrichPhone($lead, $signals);
+                            continue;
+                        }
+                        try {
+                            $response = $budget->fetch($page, true, min(120000, (int) config('enrichment.max_page_bytes', 120000)), max((float) config('enrichment.domain_min_interval_seconds', 1), $policy['crawl_delay']));
+                            $summary['pages'][] = ['url' => $page, 'status' => $response['status']];
+                            if (! $response['successful'] || ! preg_match('/<\s*(?:!doctype|html|head|body|title|a|p|div|script|form|meta|section|h[1-6])\b/i', $response['body'])) {
+                                $observations[] = $this->observation('website_unreachable', (string) $response['status'], 'No se pudo verificar contenido HTML comercial en esta página.', 'website', $page, 'http_status', 'unknown', 0);
 
-        if (blank($lead->website_url)) {
-            $this->addSignal($lead, $signals, 'no_website', 'true', 'No hay sitio web en los datos disponibles.', 'import');
-        } else {
-            $url = $this->normalizedUrl($lead->website_url);
-
-            if (! str_starts_with($url, 'https://')) {
-                $this->addSignal($lead, $signals, 'no_https', 'true', $url, 'website');
-            }
-
-            try {
-                $host = parse_url($url, PHP_URL_HOST);
-                if ($host === 'localhost' || (filter_var($host, FILTER_VALIDATE_IP) && ! filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE))) {
-                    throw new \RuntimeException('La dirección no es un sitio público.');
+                                continue;
+                            }
+                            $analysis = $this->extractor->extract($lead, $response['url'], $response['body'], $response['headers']);
+                            $observations = array_merge($observations, $analysis['evidence']);
+                            $observations[] = $this->observation('dns_public', 'true', 'Resolución A/AAAA exclusivamente pública; no demuestra entregabilidad de correo.', 'dns_http', $response['url'], 'public_dns_validation', 'observed', 0.9,
+                                ['addresses' => $response['addresses'], 'independence_key' => 'website:'.parse_url($response['url'], PHP_URL_HOST)]);
+                            if (in_array($analysis['identity']['status'], ['strong', 'registered_url'], true)) {
+                                $observations[] = $this->observation('website_verified', 'true', 'Página del sitio registrado consultada sin contradicción de identidad.', 'website', $response['url'], 'http_identity_check', 'observed', $analysis['identity']['confidence']);
+                                $observations[] = $this->observation('website_functional', 'true', 'Respuesta HTTP satisfactoria con HTML analizable; no se probó toda la funcionalidad del sitio.', 'website', $response['url'], 'http_html', 'observed', 0.8);
+                                if (str_starts_with($response['url'], 'http://')) {
+                                    $observations[] = $this->observation('http_page_observed', 'true', 'La página consultada usa HTTP; la versión HTTPS no se verificó.', 'website', $response['url'], 'url_scheme', 'observed', 0.9);
+                                }
+                                foreach ($analysis['contacts'] as $method => $values) {
+                                    $contacts[] = $method === 'email' ? 'email_visible' : ($method === 'phone' ? 'phone_visible' : $method);
+                                }
+                                $socials = array_merge($socials, $analysis['social_urls']);
+                                $contacts = array_merge($contacts, array_keys($analysis['social_urls']));
+                                if ($page === $url) {
+                                    $pending = $this->discovery->discover($url, $analysis['links']);
+                                }
+                                $summary['status'] = 'verified';
+                            } else {
+                                $summary['status'] = $analysis['identity']['status'];
+                            }
+                        } catch (\Throwable) {
+                            $observations[] = $this->observation('website_unreachable', 'unknown', 'No se pudo obtener esta página dentro de los límites de seguridad, tiempo o frecuencia.', 'website', $page, 'bounded_http', 'unknown', 0);
+                            $summary['pages'][] = ['url' => $page, 'status' => 'unavailable'];
+                        }
+                        if ($budget->remainingSeconds() <= 0.05 || $budget->remainingBytes() <= 0) {
+                            break;
+                        }
+                    }
+                } catch (\Throwable) {
+                    $observations[] = $this->observation('website_unreachable', 'unknown', 'La dirección del sitio no pudo verificarse como destino público permitido.', 'website', 'registered_site', 'destination_validation', 'unknown', 0);
                 }
-                $response = Http::timeout(8)->withOptions(['allow_redirects' => false])->get($url);
-                $analysis = $this->analyzeWebsiteContent($lead, $url, (string) $response->body(), $response->successful(), $response->status());
-                $signals = array_merge($signals, $analysis['score_signals']);
-                $contactMethods = array_values(array_unique(array_merge($contactMethods, $analysis['contact_methods'])));
-                $socialUrls = $analysis['social_urls'];
-            } catch (\Throwable $exception) {
-                $this->signal($lead, 'website_unreachable', 'unknown', $exception->getMessage(), 'website');
             }
+            $summary['bytes'] = $budget->bytes();
+            $summary['page_count'] = $budget->pages();
         }
-
-        if ($lead->phone && ! $lead->booking_visible && $this->containsAny(mb_strtolower((string) $lead->category), ['psic', 'consultorio', 'terap', 'salud'])) {
-            $this->signal($lead, 'manual_contact_dependency', 'unknown', 'La modalidad de reserva necesita revisión manual.', 'system');
+        $secondary = $this->osm->observe($lead, $budget, $force);
+        if ($secondary['managed']) {
+            $managed[] = 'osm';
+            $observations = array_merge($observations, $secondary['observations']);
         }
-
-        if (! $lead->email && ! $lead->phone) {
-            $this->addSignal($lead, $signals, 'hard_to_find_contact', 'true', 'No hay email ni teléfono importado.', 'import');
-        }
-
-        $lead->forceFill([
-            'contact_methods' => array_values(array_unique($contactMethods)),
-            'social_urls' => array_filter($socialUrls),
-            'signals' => array_values(array_unique(array_merge($lead->signalRows()->where('review_status', '!=', 'rejected')->pluck('type')->all(), $signals))),
-            'enriched_at' => Carbon::now(),
-        ])->save();
+        DB::transaction(function () use ($lead, $observations, $managed, $cached, $contacts, $socials, $summary, $inputHash, $secondary): void {
+            $this->reconciler->apply($lead, $observations, $managed);
+            if (isset($secondary['state'])) {
+                DB::table('enrichment_source_states')->updateOrInsert(['lead_id' => $lead->id, 'source' => 'osm'], $secondary['state']);
+            }
+            $current = $lead->signalRows()->current()->where('review_status', '!=', 'rejected')->get();
+            $attributes = ['signals' => $current->pluck('type')->unique()->values()->all()];
+            if (! $cached) {
+                $booking = $current->contains(fn ($signal) => $signal->type === 'booking_system_visible' && $signal->review_status === 'confirmed');
+                $attributes += ['contact_methods' => array_values(array_unique($contacts)), 'social_urls' => $socials,
+                    'booking_visible' => $booking, 'primary_cta' => $booking ? 'booking_system' : (count($contacts) > count($this->baseContactMethods($lead)) ? 'contact_or_booking' : null), 'enriched_at' => now()];
+                DB::table('enrichment_source_states')->updateOrInsert(['lead_id' => $lead->id, 'source' => 'website'], [
+                    'input_sha256' => $inputHash, 'last_checked_at' => now(), 'next_check_at' => now()->addHours(max(1, (int) config('enrichment.ttl_hours', 24))),
+                    'result' => json_encode($summary, JSON_THROW_ON_ERROR),
+                ]);
+            }
+            $lead->forceFill($attributes)->save();
+        });
 
         return $lead->refresh();
     }
 
+    /** Offline analysis reuses the extractor and reconciliation without external requests. */
     public function analyzeWebsiteContent(Lead $lead, string $url, string $html, bool $successful = true, ?int $status = null): array
     {
-        $lead->signalRows()->where('source', 'website')->delete();
-        $lead->booking_visible = false;
-        $lead->primary_cta = null;
-        $lead->save();
-        $signals = [];
-        $contactMethods = [];
-        $socialUrls = [];
-        $body = mb_strtolower(substr(strip_tags($html), 0, 120000));
-        $raw = mb_strtolower(substr($html, 0, 120000));
-
-        if (! $successful) {
-            $this->signal($lead, 'website_unreachable', (string) $status, 'No se pudo verificar el contenido de esta página.', 'website');
-
-            return ['score_signals' => [], 'contact_methods' => [], 'social_urls' => []];
+        $limit = max(1, min(120000, (int) config('services.enrichment.max_response_bytes', 120000), (int) config('enrichment.max_page_bytes', 120000)));
+        if (strlen($html) > $limit || ! $successful) {
+            $analysis = ['evidence' => [$this->observation('website_unreachable', (string) ($status ?? 'unknown'), 'Contenido no verificable dentro de los límites permitidos.', 'website', $url, 'offline_analysis', 'unknown', 0)], 'contacts' => [], 'social_urls' => []];
+        } else {
+            $analysis = $this->extractor->extract($lead, $url, $html);
         }
+        DB::transaction(function () use ($lead, $analysis): void {
+            $this->reconciler->apply($lead, $analysis['evidence'], ['website']);
+            $current = $lead->signalRows()->current()->where('review_status', '!=', 'rejected')->get();
+            $lead->forceFill(['signals' => $current->pluck('type')->unique()->values()->all(),
+                'booking_visible' => $current->contains(fn ($row) => $row->type === 'booking_system_visible' && $row->review_status === 'confirmed'),
+                'primary_cta' => isset($analysis['contacts']['form']) || isset($analysis['contacts']['whatsapp']) ? 'contact_or_booking' : null])->save();
+            if ($lead->booking_visible) {
+                $lead->update(['primary_cta' => 'booking_system']);
+            }
+        });
 
-        $lead->booking_visible = false;
-        $lead->primary_cta = null;
-        $booking = $this->containsAny($body, ['turno', 'reserva', 'agenda']);
-        $systems = $this->bookingSystems($raw);
-        $visibleBooking = $systems !== [] || $this->containsAny($body, ['reservar online', 'agenda online', 'turno online']);
-        $hasContact = $this->containsAny($body, ['contact', 'whatsapp', '@', 'teléfono', 'telefono']);
-        $clearCta = $this->containsAny($body, ['reserv', 'consult', 'contact', 'pedir turno', 'solicitar turno']);
-        $manualBooking = $this->containsAny($body, self::MANUAL_BOOKING_TERMS);
-        $complexOperation = $this->containsAny($body, ['equipo', 'profesionales', 'sedes', 'especialidades', 'consultorios']);
-
-        if (str_contains($raw, 'wa.me') || str_contains($raw, 'whatsapp')) {
-            $contactMethods[] = 'whatsapp';
-            $this->signal($lead, 'channel_whatsapp', 'true', $this->snippet($body, 'whatsapp') ?: 'Se detectó WhatsApp visible.', 'website');
-        }
-
-        if (preg_match('/[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/i', $html, $match)) {
-            $contactMethods[] = 'email_visible';
-            $this->signal($lead, 'channel_email_visible', mb_strtolower($match[0]), 'Se detectó email visible en el sitio.', 'website');
-        }
-
-        if (str_contains($raw, '<form') || $this->containsAny($body, ['formulario', 'enviar consulta'])) {
-            $contactMethods[] = 'form';
-            $this->signal($lead, 'channel_form', 'true', 'Se detectó formulario o consulta web.', 'website');
-        }
-
-        foreach ($this->socialLinks($html) as $network => $link) {
-            $contactMethods[] = $network;
-            $socialUrls[$network] = $link;
-            $this->signal($lead, 'social_'.$network, $link, "Se detectó perfil de {$network}.", 'website');
-        }
-
-        if ($booking) {
-            $this->addSignal($lead, $signals, 'booking_business', 'true', $this->snippet($body, 'turno') ?: 'El sitio contiene señales de turnos o reservas.', 'website');
-        }
-
-        if ($systems !== []) {
-            $lead->booking_visible = true;
-            $lead->primary_cta = 'booking_system';
-            $this->signal($lead, 'booking_system_visible', implode(',', $systems), 'Se detectó sistema de turnos: '.implode(', ', $systems).'.', 'website');
-        } elseif ($booking && ! $visibleBooking) {
-            $this->addSignal($lead, $signals, 'no_visible_booking', 'true', 'Hay señales de turnos, pero no sistema visible.', 'website');
-        }
-
-        if ($manualBooking) {
-            $this->addSignal($lead, $signals, 'manual_contact_dependency', 'true', $this->firstSnippet($body, self::MANUAL_BOOKING_TERMS) ?: 'La web sugiere gestión manual de turnos.', 'website');
-            $this->signal($lead, 'manual_booking_dependency', 'true', 'La web sugiere gestión manual de turnos.', 'website');
-        }
-
-        if ($complexOperation) {
-            $this->signal($lead, 'operational_complexity', 'true', $this->firstSnippet($body, ['equipo', 'profesionales', 'sedes', 'especialidades', 'consultorios']) ?: 'Se detectó complejidad operativa.', 'website');
-        }
-
-        if (! $hasContact) {
-            $this->addSignal($lead, $signals, 'hard_to_find_contact', 'true', 'No se detectó contacto claro en la página principal.', 'website');
-        }
-
-        if (! $clearCta) {
-            $this->addSignal($lead, $signals, 'weak_cta', 'true', 'No se detectó CTA claro en la página principal.', 'website');
-        }
-
-        if (mb_strlen(trim($body)) < 500) {
-            $this->signal($lead, 'weak_website_content', 'short_home', 'La página principal tiene poco contenido analizable.', 'website');
-        }
-
-        if (! preg_match('/<title>[^<]{3,}<\/title>/i', $html)) {
-            $this->signal($lead, 'weak_website_content', 'missing_title', 'No se detectó título HTML claro.', 'website');
-        }
-
-        if (! $lead->booking_visible) {
-            $lead->booking_visible = $visibleBooking;
-        }
-
-        if (! $lead->primary_cta) {
-            $lead->primary_cta = $clearCta ? 'contact_or_booking' : null;
-        }
-
-        $lead->save();
-
-        return [
-            'score_signals' => array_values(array_unique($signals)),
-            'contact_methods' => array_values(array_unique($contactMethods)),
-            'social_urls' => $socialUrls,
-        ];
+        return ['score_signals' => array_column($analysis['evidence'], 'type'),
+            'contact_methods' => array_map(fn (string $method): string => $method === 'email' ? 'email_visible' : $method, array_keys($analysis['contacts'])), 'social_urls' => $analysis['social_urls']];
     }
 
-    private function enrichPhone(Lead $lead, array &$signals): void
+    private function baseObservations(Lead $lead): array
     {
-        if (! $lead->phone) {
-            return;
+        $observations = [];
+        if ($lead->phone) {
+            $valid = $this->normalizer->hasComparablePhone($lead->phone) && $this->normalizer->phone($lead->phone, $lead->country) !== null;
+            $observations[] = $this->observation($valid ? 'phone_format_valid' : 'phone_format_invalid', $valid ? preg_replace('/\D/', '', $lead->phone) : 'invalid',
+                $valid ? 'Formato telefónico utilizable; no se comprobó disponibilidad ni titularidad.' : 'El teléfono registrado no tiene un formato utilizable.', 'import', 'phone', 'contact_normalizer', 'observed', 0.8);
+            if ($valid && str_starts_with(preg_replace('/\D/', '', $lead->phone), '549')) {
+                $observations[] = $this->observation('phone_likely_mobile', 'true', 'El prefijo es compatible con móvil; la disponibilidad no se comprobó.', 'import', 'phone', 'prefix', 'inferred', 0.4);
+            }
+        }
+        if (blank($lead->website_url)) {
+            $observations[] = $this->observation('no_website', 'unknown', 'No hay un dominio registrado; esto no demuestra una necesidad comercial.', 'import', 'registered_site', 'import_field', 'unknown', 0);
+        }
+        if (! $lead->email && ! $lead->phone) {
+            $observations[] = $this->observation('hard_to_find_contact', 'unknown', 'No hay contacto registrado; no demuestra que el negocio carezca de canales públicos.', 'import', 'contact', 'import_field', 'unknown', 0);
+        }
+        foreach ($lead->sources()->where('source', 'google_maps')->get() as $source) {
+            $observations[] = $this->observation('maps_source_record', $source->source_identifier ?: (string) $source->id, 'Identificador y procedencia conservados desde la fuente inicial de descubrimiento.', 'google_maps', 'google_maps:'.($source->source_identifier ?: $source->id), 'import_field', 'observed', 0.8,
+                ['source_identifier' => $source->source_identifier, 'source_url' => $source->source_url, 'independence_key' => 'google_maps']);
+        }
+        if ($lead->contactAttempts()->exists() || $lead->campaigns()->exists()) {
+            $observations[] = $this->observation('crm_history_available', 'true', 'Existe historial comercial propio; sus resultados no son predictores del scoring.', 'crm', 'crm:lead:'.$lead->id, 'crm_history', 'observed', 1,
+                ['independence_key' => 'crm', 'not_a_score_predictor' => true]);
         }
 
-        $digits = preg_replace('/\D+/', '', $lead->phone);
-
-        if (! $digits || strlen($digits) < 8) {
-            $this->signal($lead, 'phone_format_invalid', (string) $lead->phone, 'El teléfono tiene pocos dígitos.', 'import');
-
-            return;
-        }
-
-        $this->signal($lead, 'phone_format_valid', $digits, 'El teléfono tiene longitud utilizable.', 'import');
-
-        if (str_starts_with($digits, '549') || (str_starts_with($digits, '54') && strlen($digits) >= 12)) {
-            $this->signal($lead, 'phone_likely_mobile', $digits, 'El teléfono parece compatible con contacto móvil.', 'import');
-        }
+        return $observations;
     }
 
-    private function addSignal(Lead $lead, array &$signals, string $type, string $value, string $evidence, string $source): void
+    private function inputHash(Lead $lead): string
     {
-        $this->signal($lead, $type, $value, $evidence, $source);
-        $signals[] = $type;
-    }
-
-    private function signal(Lead $lead, string $type, string $value, string $evidence, string $source): void
-    {
-        Signal::updateOrCreate([
-            'lead_id' => $lead->id,
-            'type' => $type,
-        ], [
-            'value' => $value,
-            'evidence' => $evidence,
-            'source' => $source,
-            'detected_at' => Carbon::now(),
-            'evidence_kind' => in_array($type, ['manual_contact_dependency', 'no_visible_booking', 'weak_website_content', 'website_unreachable']) ? 'inferred' : 'observed',
-            'review_status' => in_array($type, ['manual_contact_dependency', 'no_visible_booking', 'weak_website_content', 'website_unreachable']) ? 'pending' : 'confirmed',
-            'evidence_url' => $source === 'website' ? $lead->website_url : null,
-        ]);
+        return hash('sha256', json_encode([$lead->only(['name', 'email', 'phone', 'website_url', 'location', 'city', 'country', 'category']),
+            $lead->sources()->orderBy('id')->get()->map(fn ($source) => [$source->source, $source->source_identifier, $source->metadata['coordinates'] ?? null])->all()], JSON_THROW_ON_ERROR));
     }
 
     private function baseContactMethods(Lead $lead): array
     {
-        return array_values(array_filter([
-            $lead->email ? 'email' : null,
-            $lead->phone ? 'phone' : null,
-            $lead->website_url ? 'website' : null,
-        ]));
+        return array_values(array_filter([$lead->email ? 'email' : null, $lead->phone ? 'phone' : null, $lead->website_url ? 'website' : null]));
     }
 
-    private function normalizedUrl(string $url): string
+    private function observation(string $type, string $value, string $evidence, string $source, string $reference, string $method, string $kind, float $confidence, array $metadata = []): array
     {
-        return str_starts_with($url, 'http') ? $url : "https://{$url}";
-    }
-
-    private function containsAny(string $body, array $terms): bool
-    {
-        foreach ($terms as $term) {
-            if (str_contains($body, $term)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function bookingSystems(string $body): array
-    {
-        $systems = [];
-
-        foreach (self::BOOKING_SYSTEMS as $system => $needles) {
-            if ($this->containsAny($body, $needles)) {
-                $systems[] = $system;
-            }
-        }
-
-        return $systems;
-    }
-
-    private function socialLinks(string $html): array
-    {
-        $links = [];
-
-        preg_match_all('/https?:\/\/[^\s"\']+/i', $html, $matches);
-
-        foreach ($matches[0] ?? [] as $url) {
-            $clean = rtrim($url, '.,;)</]');
-            $lower = mb_strtolower($clean);
-
-            if (str_contains($lower, 'instagram.com') && ! isset($links['instagram'])) {
-                $links['instagram'] = $clean;
-            }
-
-            if (str_contains($lower, 'facebook.com') && ! isset($links['facebook'])) {
-                $links['facebook'] = $clean;
-            }
-
-            if (str_contains($lower, 'doctoralia.') && ! isset($links['doctoralia'])) {
-                $links['doctoralia'] = $clean;
-            }
-        }
-
-        return $links;
-    }
-
-    private function snippet(string $body, string $term): ?string
-    {
-        $position = mb_strpos($body, $term);
-
-        if ($position === false) {
-            return null;
-        }
-
-        return trim(mb_substr($body, max(0, $position - 55), 140));
-    }
-
-    private function firstSnippet(string $body, array $terms): ?string
-    {
-        foreach ($terms as $term) {
-            if ($snippet = $this->snippet($body, $term)) {
-                return $snippet;
-            }
-        }
-
-        return null;
+        return ['type' => $type, 'value' => $value, 'evidence' => $evidence, 'source' => $source, 'source_reference' => $reference,
+            'evidence_url' => str_starts_with($reference, 'http') ? $reference : null, 'extraction_method' => $method, 'evidence_kind' => $kind, 'confidence' => $confidence,
+            'metadata' => ['independence_key' => $source === 'website' || $source === 'dns_http' ? 'website:'.parse_url($reference, PHP_URL_HOST) : $source] + $metadata];
     }
 }

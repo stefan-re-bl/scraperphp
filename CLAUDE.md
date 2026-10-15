@@ -1,3 +1,7 @@
+## Documentación del proyecto
+
+Consulta primero el [índice vigente](docs/README.md). Los procedimientos pertenecen a [Operación](docs/OPERATIONS.md), los resultados fechados a [Estado](docs/PROJECT_STATE.md) y los informes de entregas cerradas al [archivo histórico](docs/archive/README.md). Actualiza el documento responsable y sus enlaces, sin añadir resúmenes repetidos a todos los archivos. Durante mantenimiento documental no modifiques la base operativa ni los registros importados de Notion.
+
 <laravel-boost-guidelines>
 === foundation rules ===
 

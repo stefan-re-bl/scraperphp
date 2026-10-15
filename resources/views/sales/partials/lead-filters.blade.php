@@ -4,7 +4,10 @@
     <div class="quick-filter"><label><span class="sr-only">Búsqueda rápida</span><input name="q" value="{{ $filters['q'] ?? '' }}" placeholder="Buscar por nombre, email, teléfono o notas"></label><button>@include('sales.partials.icon',['name'=>'search']) Buscar</button><a class="button light" href="{{ ($filterAction ?? route('leads')).(!empty($fixedFilters) ? '?'.http_build_query($fixedFilters) : '') }}">Limpiar</a><details class="action-menu"><summary aria-label="Exportar esta vista">@include('sales.partials.icon',['name'=>'download']) Exportar</summary><div class="action-menu-list"><a href="{{ route('exports.csv',['dataset'=>'leads']+($filterQuery ?? [])) }}">CSV de esta vista</a><a href="{{ route('exports.json',$filterQuery ?? []) }}">JSON de esta vista</a><a href="{{ route('exports.phones',$filterQuery ?? []) }}">Teléfonos</a><a href="{{ route('exports.analytics',$filterQuery ?? []) }}">Informe de actividad</a></div></details></div>
     <details class="filter-advanced" @if(count($filters)>2) open @endif><summary>@include('sales.partials.icon',['name'=>'filter']) Filtros avanzados</summary><div class="filters">
 <label>Relación<select name="relationship_type"><option value="">Todas</option>@foreach (['prospect'=>'Cliente potencial','collaborator'=>'Colaborador','customer'=>'Cliente'] as $key=>$label)<option value="{{ $key }}" @selected(($filters['relationship_type'] ?? '') === $key)>{{ $label }}</option>@endforeach</select></label>
-        <label>Etiqueta<input name="tag" value="{{ $filters['tag'] ?? '' }}"></label>
+        <label>Prioridad manual<select name="manual_priority"><option value="">Todas</option>@foreach(['high'=>'Alta','medium'=>'Media','low'=>'Baja'] as $value=>$label)<option value="{{ $value }}" @selected(($filters['manual_priority'] ?? '')===$value)>{{ $label }}</option>@endforeach</select></label>
+<label>Identidad<select name="entity_type"><option value="">Todas</option><option value="person" @selected(($filters['entity_type'] ?? '')==='person')>Persona</option><option value="organization" @selected(($filters['entity_type'] ?? '')==='organization')>Organización</option></select></label>
+<label>Clasificación<select name="classification_pending"><option value="">Todas</option><option value="1" @selected(($filters['classification_pending'] ?? '')==='1')>Pendiente</option><option value="0" @selected(($filters['classification_pending'] ?? '')==='0')>Revisada</option></select></label>
+<label>Etiqueta<input name="tag" value="{{ $filters['tag'] ?? '' }}"></label>
             @if(empty($campaign))<label>Campaña
                 <select name="campaign">
                     <option value="">Todas</option>
@@ -25,8 +28,9 @@
             <label>Segmento<input name="segment" value="{{ $filters['segment'] ?? '' }}"></label>
             <label>Ciudad<input name="city" value="{{ $filters['city'] ?? '' }}"></label>
             <label>País<input name="country" value="{{ $filters['country'] ?? '' }}"></label>
-            <label>Prioridad mínima<input type="number" name="min_score" value="{{ $filters['min_score'] ?? '' }}"></label>
-            <label>Prioridad máxima<input type="number" name="max_score" value="{{ $filters['max_score'] ?? '' }}"></label>
+            <label>Puntuación para una oferta<select name="score_offer_id"><option value="">Según campaña o puntaje general</option>@foreach($offers as $scoreOffer)<option value="{{ $scoreOffer->id }}" @selected(($filters['score_offer_id'] ?? '')==$scoreOffer->id)>{{ $scoreOffer->name }}</option>@endforeach</select></label>
+            <label>Scoring mínimo<input type="number" name="min_score" value="{{ $filters['min_score'] ?? '' }}"></label>
+            <label>Scoring máximo<input type="number" name="max_score" value="{{ $filters['max_score'] ?? '' }}"></label>
             <label>Oferta
                 <select name="offer_id">
                     <option value="">Todas</option>

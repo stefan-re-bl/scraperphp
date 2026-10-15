@@ -35,6 +35,9 @@ class BackupService
         if ($check !== ['ok']) {
             throw new \RuntimeException('El respaldo no pasó la verificación de integridad.');
         }
+        if ($pdo->query('PRAGMA foreign_key_check')->fetchAll() !== []) {
+            throw new \RuntimeException('El respaldo contiene relaciones rotas y no se puede restaurar.');
+        }
         $tables = $pdo->query("SELECT name FROM sqlite_master WHERE type = 'table'")->fetchAll(PDO::FETCH_COLUMN);
         foreach (['leads', 'campaigns', 'contact_attempts', 'campaign_lead', 'migrations'] as $required) {
             if (! in_array($required, $tables)) {

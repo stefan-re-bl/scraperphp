@@ -1,4 +1,4 @@
-@php($defaultTemplateBody = 'Hola '.chr(123).chr(123).'negocio'.chr(125).chr(125).', ¿podemos conversar sobre '.chr(123).chr(123).'oferta'.chr(125).chr(125).'?')
+@php($defaultTemplateBody = 'Hola '.chr(123).chr(123).'nombre'.chr(125).chr(125).".\n\n".chr(123).chr(123).'oferta_detallada'.chr(125).chr(125))
 <div class="grid">
 <label>Nombre<input name="name" value="{{ $editingTemplate?->name }}" required></label>
 <label>Idioma<input name="language" value="{{ $editingTemplate?->language ?? $preferences['language'] }}" required></label>

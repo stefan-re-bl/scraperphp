@@ -16,16 +16,23 @@ class CatalogController extends Controller
         return view('sales.offers', ['offers' => Offer::latest()->get()]);
     }
 
-    private function offerData(Request $request): array
+    private function offerData(Request $request, ?Offer $offer = null): array
     {
         $data = $request->validate(['name' => 'required|string|max:255', 'target_customer' => 'nullable|string|max:255', 'segment' => 'nullable|string|max:255',
             'pains' => 'nullable|string|max:10000', 'benefits' => 'nullable|string|max:10000', 'compatibility_signals' => 'nullable|string|max:10000',
             'assets' => 'nullable|string|max:10000', 'demo_url' => 'nullable|url:http,https|max:2048', 'portfolio_url' => 'nullable|url:http,https|max:2048',
-            'suggested_cta' => 'nullable|string|max:255', 'keywords' => 'nullable|string|max:2000', 'match_signals' => 'nullable|string|max:2000', 'minimum_match' => 'nullable|integer|min:1|max:1000']);
+            'suggested_cta' => 'nullable|string|max:255', 'keywords' => 'nullable|string|max:2000', 'match_signals' => 'nullable|string|max:2000', 'minimum_match' => 'nullable|integer|min:1|max:1000', 'scoring_profile' => 'nullable|in:booking,web,ecommerce,generic']);
         $keywords = array_values(array_filter(array_map('trim', explode(',', $data['keywords'] ?? ''))));
         $signals = array_values(array_filter(array_map('trim', explode(',', $data['match_signals'] ?? ''))));
-        $data['rules'] = ['keywords' => $keywords ?: array_filter([$data['segment'] ?? null]), 'signals' => $signals, 'minimum' => $data['minimum_match'] ?? 20];
-        unset($data['keywords'], $data['match_signals'], $data['minimum_match']);
+        $data['rules'] = array_merge($offer?->rules ?? [], ['keywords' => $keywords ?: array_filter([$data['segment'] ?? null]), 'signals' => $signals, 'minimum' => $data['minimum_match'] ?? 20]);
+        if (array_key_exists('scoring_profile', $data)) {
+            if (filled($data['scoring_profile'])) {
+                $data['rules']['scoring_profile'] = $data['scoring_profile'];
+            } else {
+                unset($data['rules']['scoring_profile']);
+            }
+        }
+        unset($data['keywords'], $data['match_signals'], $data['minimum_match'], $data['scoring_profile']);
 
         return $data + ['active' => $request->boolean('active', true)];
     }
@@ -33,13 +40,15 @@ class CatalogController extends Controller
     public function storeOffer(Request $request): mixed
     {
         Offer::create($this->offerData($request));
+        RecalculateScores::dispatch()->onQueue('sales');
 
         return back()->with('status', 'Oferta creada.');
     }
 
     public function updateOffer(Request $request, Offer $offer): mixed
     {
-        $offer->update($this->offerData($request));
+        $offer->update($this->offerData($request, $offer));
+        RecalculateScores::dispatch()->onQueue('sales');
 
         return back()->with('status', 'Oferta actualizada.');
     }

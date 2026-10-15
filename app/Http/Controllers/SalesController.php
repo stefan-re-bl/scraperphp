@@ -12,6 +12,7 @@ use App\Models\MessageTemplate;
 use App\Models\Proposal;
 use App\Models\Reply;
 use App\Services\CampaignMembership;
+use App\Services\CommercialWorkService;
 use App\Services\ExperimentService;
 use App\Services\LlmBridgeService;
 use App\Services\MetricsService;
@@ -29,6 +30,7 @@ class SalesController extends Controller
 
         return view('sales.dashboard', [
             'metrics' => $funnel,
+            'dailyActions' => app(CommercialWorkService::class)->actions(limit: 12),
             'pendingCounts' => [
                 'queue' => (clone $ready)->count(),
                 'followups' => (clone $followups)->count(),
@@ -36,7 +38,7 @@ class SalesController extends Controller
                 'proposals' => Proposal::where(fn ($q) => $q->whereNull('result')->orWhere('result', 'pending'))->count(),
                 'duplicates' => Lead::where('duplicate_status', 'possible_duplicate')->count(),
             ],
-            'readyToContact' => (clone $ready)->orderByDesc('score_total')->limit(8)->get(),
+            'readyToContact' => (clone $ready)->with(['offerScores.offer', 'campaigns'])->orderByRaw('resolved_score is null')->orderByDesc('resolved_score')->limit(8)->get(),
             'overdueFollowUps' => (clone $followups)->with('lead', 'campaign')->latest()->limit(8)->get(),
             'pendingReplies' => Reply::with('lead')
                 ->where('requires_human', true)
@@ -62,7 +64,8 @@ class SalesController extends Controller
         return view('sales.experiments', [
             'campaigns' => Campaign::latest()->get(),
             'templates' => MessageTemplate::latest()->get(),
-            'experiments' => Experiment::with('variants')->latest()->get(),
+            'leads' => Lead::orderBy('name')->get(['id', 'name']),
+            'experiments' => Experiment::with(['variants' => fn ($q) => $q->withCount(['contactAttempts as real_attempts_count' => fn ($q) => $q->where('dry_run', false)->where('status', 'sent')->whereNotNull('performed_at')])])->latest()->get(),
         ]);
     }
 

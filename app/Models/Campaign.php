@@ -29,7 +29,7 @@ class Campaign extends Model
 
     public function leads(): BelongsToMany
     {
-        return $this->belongsToMany(Lead::class)->withPivot(['id', 'offer_id', 'status', 'next_action_at', 'interested_at', 'won_at', 'lost_at'])->withTimestamps();
+        return $this->belongsToMany(Lead::class)->withPivot(['id', 'contact_enabled', 'offer_id', 'status', 'next_action_at', 'interested_at', 'won_at', 'lost_at'])->withTimestamps();
     }
 
     public function queries()

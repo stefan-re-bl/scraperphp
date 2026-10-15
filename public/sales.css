@@ -146,6 +146,7 @@ details[open]>summary{margin-bottom:16px}
 .app-notice>button{margin-left:auto;padding:0;color:inherit}
 .toast{position:fixed;right:26px;bottom:26px;max-width:380px;padding:13px 19px;background:#17233b;color:#fff;border-radius:10px;font-size:12px;box-shadow:0 8px 25px #17233b30;z-index:80;animation:toast-in .15s ease-out}
 .table-wrap{width:100%;overflow:auto;border:1px solid var(--line);border-radius:11px;max-height:65vh;scrollbar-width:thin}
+[data-infinite-list] .table-wrap{max-height:none}
 table{width:100%;border-collapse:separate;border-spacing:0;background:#fff;table-layout:auto}
 th,td{text-align:left;vertical-align:middle;padding:13px 14px;border-bottom:1px solid #edf0f6;font-size:12px}
 th{position:sticky;top:0;background:#f8fafd;z-index:2;font-size:10px;font-weight:650;text-transform:uppercase;letter-spacing:.7px;color:#7a879b;white-space:nowrap}
@@ -201,6 +202,13 @@ td a:hover{color:var(--brand)}
 .pagination{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:18px 0 0}
 .pagination-summary{font-size:11px;color:var(--muted)}
 .pagination-links{display:flex;gap:5px;flex-wrap:wrap}
+.infinite-scroll-footer{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;padding:20px 12px;text-align:center;overflow-anchor:none}
+.infinite-scroll-footer p{margin:0;font-size:12px}
+.infinite-scroll-footer .button{min-height:34px;font-size:12px}
+.infinite-scroll-footer.is-loading:before{content:"";width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--brand);border-radius:50%;animation:spin .8s linear infinite}
+.infinite-scroll-footer [aria-disabled=true]{pointer-events:none;opacity:.5}
+[data-whatsapp-open][aria-disabled=true]{pointer-events:none;opacity:.5}
+[data-whatsapp-composer] [data-message-body]{min-height:260px}
 .page-link{display:grid;place-items:center;min-width:32px;min-height:32px;padding:5px 9px;border:1px solid var(--line);border-radius:7px;background:white;color:#60718c;font-size:11px}
 .page-link:hover{background:#f3f7ff;text-decoration:none}
 .page-link.active{background:#edf3ff;border-color:#b9cef6;color:var(--brand);font-weight:700}

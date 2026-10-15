@@ -1,11 +1,12 @@
 @php
     $navigation = [
         ['dashboard', 'Inicio', 'home', request()->is('/') || request()->is('dashboard')],
-        ['leads', 'Prospectos', 'people', request()->is('leads*')],
+        ['leads', 'Cartera', 'people', request()->is('leads*')],
         ['queue', 'Cola de trabajo', 'queue', request()->is('contact-queue')],
         ['pipeline', 'Oportunidades', 'pipeline', request()->is('pipeline') || request()->is('campaigns/*/pipeline')],
         ['campaigns', 'Campañas', 'campaign', request()->is('campaigns*') && !request()->is('campaigns/*/pipeline')],
         ['replies', 'Respuestas', 'reply', request()->is('replies*')],
+        ['services', 'Servicios', 'calendar', request()->is('services*')],
         ['proposals', 'Propuestas', 'proposal', request()->is('proposals*')],
     ];
     $administration = [
@@ -48,7 +49,7 @@
     <div class="app-body">
         <header class="app-header">
             <div class="header-location"><button type="button" class="icon-button nav-toggle" data-nav-toggle aria-controls="app-sidebar" aria-expanded="false" aria-label="Abrir navegación">@include('sales.partials.icon', ['name'=>'menu'])</button><span class="header-section">Espacio de trabajo</span><span class="header-divider">/</span><strong>{{ $currentPage[1] ?? 'Ventas' }}</strong></div>
-            <form method="get" action="{{ route('leads') }}" class="global-search" role="search">@include('sales.partials.icon', ['name'=>'search'])<input name="q" aria-label="Buscar prospectos" placeholder="Buscar prospectos…" value="{{ request()->routeIs('leads') ? request('q') : '' }}"><button type="submit" class="icon-button" aria-label="Buscar">@include('sales.partials.icon', ['name'=>'arrow'])</button></form>
+            <form method="get" action="{{ route('leads') }}" class="global-search" role="search">@include('sales.partials.icon', ['name'=>'search'])<input name="q" aria-label="Buscar en la cartera" placeholder="Buscar en la cartera…" value="{{ request()->routeIs('leads') ? request('q') : '' }}"><button type="submit" class="icon-button" aria-label="Buscar">@include('sales.partials.icon', ['name'=>'arrow'])</button></form>
             <span class="header-date">@include('sales.partials.icon', ['name'=>'calendar']){{ now()->timezone($preferences['timezone'])->format('d/m/Y') }}</span>
         </header>
         <main id="main-content" class="main-content" tabindex="-1">

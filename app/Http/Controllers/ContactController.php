@@ -6,15 +6,19 @@ use App\Models\Campaign;
 use App\Models\ContactAttempt;
 use App\Models\Lead;
 use App\Models\MessageTemplate;
+use App\Models\Offer;
 use App\Models\Proposal;
 use App\Models\Reply;
 use App\Services\CampaignMembership;
+use App\Services\ContactNormalizer;
 use App\Services\ContactWorkflow;
 use App\Services\EmailContactService;
 use App\Services\ExclusionService;
+use App\Services\ExperimentService;
 use App\Services\FollowUpService;
 use App\Services\LeadPipeline;
 use App\Services\TemplateRenderer;
+use App\Services\WhatsAppMessageService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -23,7 +27,7 @@ use Illuminate\Validation\ValidationException;
 
 class ContactController extends Controller
 {
-    public function queue(Request $request, TemplateRenderer $renderer): mixed
+    public function queue(Request $request, TemplateRenderer $renderer, WhatsAppMessageService $whatsapp): mixed
     {
         $request->validate(['campaign' => 'nullable|exists:campaigns,id', 'lead' => 'nullable|exists:leads,id', 'template' => 'nullable|exists:message_templates,id', 'channel' => 'nullable|in:email,phone,whatsapp,manual']);
         $campaign = $request->filled('campaign') ? Campaign::findOrFail($request->integer('campaign')) : null;
@@ -35,10 +39,10 @@ class ContactController extends Controller
         if ($skipped) {
             $query->whereNotIn('leads.id', $skipped);
         }
-        $leads = $query->with(['campaigns.offer', 'contactAttempts', 'suggestedOffer', 'signalRows', 'scoreComponents'])->orderByRaw('case when next_action_at is null then 1 else 0 end')->orderBy('next_action_at')->orderByDesc('score_total')->paginate(1)->withQueryString();
+        $leads = $query->with(['campaigns.offer', 'offerScores.offer', 'contactAttempts', 'suggestedOffer', 'signalRows', 'scoreComponents'])->orderByRaw('case when next_action_at is null then 1 else 0 end')->orderBy('next_action_at')->orderByRaw('resolved_score is null')->orderByDesc('resolved_score')->orderByDesc('leads.id')->paginate(1)->withQueryString();
         $prepared = [];
         foreach ($leads as $lead) {
-            $context = $campaign ?? $lead->campaigns->first(fn ($c) => ! $c->kill_switch && $c->status === 'active'
+            $context = $campaign ?? $lead->campaigns->firstWhere('id', (int) $lead->queue_campaign_id) ?? $lead->campaigns->first(fn ($c) => ! $c->kill_switch && $c->status === 'active'
                 && in_array($c->pivot->status, ['QUEUED', 'CONTACTED']) && (! $c->pivot->next_action_at || Carbon::parse($c->pivot->next_action_at)->isPast())
                 && ($c->pivot->status === 'QUEUED' || $lead->contactAttempts->contains(fn ($a) => $a->campaign_id === $c->id && $a->status === 'planned' && (! $a->due_at || $a->due_at->isPast()))));
             $offer = app(CampaignMembership::class)->offer($lead, $context);
@@ -46,17 +50,51 @@ class ContactController extends Controller
             $step = $pending?->step ?? 'initial';
             $channel = $request->query('channel', $pending?->channel ?? ($context?->channel === 'manual' ? 'email' : ($context?->channel ?? 'email')));
             $template = $request->filled('template') ? MessageTemplate::where('active', true)->where('channel', $channel)->where('stage', $step)->where('language', $lead->language)->where(fn ($q) => $q->whereNull('segment')->orWhere('segment', $lead->segment))->where(fn ($q) => $q->whereNull('offer_id')->orWhere('offer_id', $offer?->id))->find($request->integer('template')) : $renderer->select($lead, $channel, $step, $offer?->id);
+            $variant = app(ExperimentService::class)->assigned($lead, $context);
+            $variantTemplate = $variant ? app(ExperimentService::class)->template($variant) : null;
+            if (! $request->filled('template') && $variantTemplate && $variantTemplate->active && $variantTemplate->channel === $channel && $variantTemplate->stage === $step
+                && $variantTemplate->language === $lead->language && (! $variantTemplate->segment || $variantTemplate->segment === $lead->segment)
+                && (! $variantTemplate->offer_id || $variantTemplate->offer_id === $offer?->id)) {
+                $template = $variantTemplate;
+            }
+            $message = $template ? $renderer->render($template, $lead, $offer) : ($channel === 'whatsapp' ? $renderer->renderOffer($lead, $offer) : ['subject' => '', 'body' => '', 'missing' => []]);
             $prepared[$lead->id] = ['campaign' => $context, 'pending' => $pending, 'step' => $step, 'channel' => $channel, 'template' => $template,
-                'message' => $template ? $renderer->render($template, $lead, $offer) : ['subject' => '', 'body' => '', 'missing' => []]];
+                'variant' => $variant, 'offer' => $offer, 'message' => $message, 'whatsapp_phone' => app(ContactNormalizer::class)->whatsappPhone($lead->phone, $lead->country),
+                'whatsapp_url' => $channel === 'whatsapp' ? $whatsapp->url($lead, $message['body']) : null];
         }
 
         return view('sales.queue', ['campaign' => $campaign, 'leads' => $leads, 'prepared' => $prepared, 'campaigns' => Campaign::where('status', 'active')->where('kill_switch', false)->get(), 'templates' => MessageTemplate::where('active', true)->get()]);
     }
 
+    public function whatsapp(Request $request, Lead $lead, WhatsAppMessageService $whatsapp, CampaignMembership $memberships, ExclusionService $exclusions): mixed
+    {
+        $data = $request->validate(['campaign_id' => 'nullable|integer|exists:campaigns,id']);
+        $campaign = isset($data['campaign_id']) ? Campaign::findOrFail($data['campaign_id']) : null;
+        if ($campaign) {
+            abort_unless($memberships->query($campaign)->whereKey($lead->id)->exists(), 404);
+        } else {
+            if ($lead->campaigns()->count() > 1) {
+                throw ValidationException::withMessages(['campaign_id' => 'Seleccioná una campaña para preparar el mensaje.']);
+            }
+            $campaign = $lead->campaigns()->first();
+        }
+        $exclusions->assertContactable($lead, $campaign);
+        if (in_array($memberships->status($lead, $campaign), ['PAUSED', 'WON', 'LOST'], true)) {
+            throw ValidationException::withMessages(['lead_id' => 'La oportunidad está pausada o cerrada.']);
+        }
+        $pending = $lead->contactAttempts()->where('campaign_id', $campaign?->id)->where('status', 'planned')->orderBy('due_at')->first();
+        $prepared = $whatsapp->prepare($lead, $campaign, $pending?->step ?? 'initial');
+
+        return response()->json(['body' => $prepared['message']['body'], 'missing' => $prepared['message']['missing'],
+            'phone' => $prepared['phone'], 'url' => $prepared['url'], 'offer_id' => $prepared['offer']?->id,
+            'offer_name' => $prepared['offer']?->name, 'template_id' => $prepared['template']?->id, 'campaign_id' => $campaign?->id,
+            'step' => $pending?->step ?? 'initial', 'contact_attempt_id' => $pending?->id]);
+    }
+
     public function storeContactAttempt(Request $request, ContactWorkflow $workflow): mixed
     {
         $data = $request->validate(['lead_id' => 'required|exists:leads,id', 'campaign_id' => 'required|exists:campaigns,id', 'channel' => 'required|in:email,phone,whatsapp,manual',
-            'variant' => 'nullable|string|max:255', 'step' => 'required|in:initial,follow_up_1,follow_up_2,closed', 'planned_at' => 'nullable|date',
+            'variant' => 'nullable|string|max:255', 'preparation_seconds' => 'nullable|integer|min:0|max:86400', 'step' => 'required|in:initial,follow_up_1,follow_up_2,closed', 'planned_at' => 'nullable|date',
             'performed_at' => 'nullable|date|before_or_equal:now', 'message_snapshot' => 'nullable|string|max:20000', 'result' => 'nullable|string|max:255',
             'message_template_id' => 'nullable|exists:message_templates,id', 'subject' => 'nullable|string|max:255', 'contact_attempt_id' => 'nullable|exists:contact_attempts,id']);
         $workflow->record($data);
@@ -102,7 +140,7 @@ class ContactController extends Controller
     {
         return view('sales.replies', ['leads' => Lead::orderBy('name')->get(), 'attempts' => ContactAttempt::where('status', 'sent')->where('dry_run', false)->latest()->get(),
             'categories' => Reply::CATEGORIES, 'campaigns' => Campaign::get(),
-            'replies' => Reply::with('lead')->when($request->boolean('pending'), fn ($q) => $q->where('requires_human', true))->latest()->paginate(50)->withQueryString()]);
+            'replies' => Reply::with('lead')->when($request->boolean('pending'), fn ($q) => $q->where('requires_human', true))->latest()->orderByDesc('id')->paginate(50)->withQueryString()]);
     }
 
     public function storeReply(Request $request): mixed
@@ -138,23 +176,31 @@ class ContactController extends Controller
 
     public function proposals(): mixed
     {
-        return view('sales.proposals', ['leads' => Lead::orderBy('name')->get(), 'campaigns' => Campaign::get(), 'proposals' => Proposal::with('lead')->latest()->paginate(50)]);
+        return view('sales.proposals', ['leads' => Lead::with('campaigns')->orderBy('name')->get(), 'campaigns' => Campaign::get(),
+            'offers' => Offer::orderBy('name')->get(), 'proposals' => Proposal::with(['lead.campaigns', 'offer'])->latest()->orderByDesc('id')->paginate(50)->withQueryString()]);
     }
 
     private function proposalData(Request $request, ?Proposal $proposal = null): array
     {
-        $data = $request->validate(['lead_id' => 'required|exists:leads,id', 'campaign_id' => 'nullable|exists:campaigns,id', 'service' => 'required|string|max:255',
+        $data = $request->validate(['lead_id' => 'required|exists:leads,id', 'campaign_id' => 'nullable|exists:campaigns,id', 'offer_id' => 'sometimes|nullable|integer|exists:offers,id', 'service' => 'nullable|string|max:255',
             'amount' => 'nullable|numeric|min:0', 'currency' => 'required|string|size:3', 'version' => 'required|integer|min:1',
-            'sent_at' => 'nullable|date', 'response' => 'nullable|string|max:10000', 'objections' => 'nullable|string|max:10000', 'modifications' => 'nullable|string|max:10000', 'result' => 'nullable|in:pending,won,lost']);
+            'sent_at' => 'nullable|date', 'response' => 'nullable|string|max:10000', 'objections' => 'nullable|string|max:10000', 'modifications' => 'nullable|string|max:10000', 'result' => 'nullable|in:pending,won,lost'],
+            ['offer_id.exists' => 'La oferta seleccionada ya no está disponible.']);
         if ($proposal && ($proposal->lead_id !== (int) $data['lead_id'] || ($data['campaign_id'] ?? $proposal->campaign_id) != $proposal->campaign_id)) {
             abort(422);
         }
         $lead = Lead::findOrFail($data['lead_id']);
         $campaign = app(CampaignMembership::class)->resolve($lead, $data['campaign_id'] ?? $proposal?->campaign_id);
         $data['campaign_id'] = $campaign?->id;
-        $data['offer_id'] = $proposal?->offer_id ?? app(CampaignMembership::class)->offer($lead, $campaign)?->id;
+        $offer = array_key_exists('offer_id', $data) ? ($data['offer_id'] ? Offer::findOrFail($data['offer_id']) : null)
+            : ($proposal?->offer ?? app(CampaignMembership::class)->offer($lead, $campaign));
+        $data['offer_id'] = $offer?->id;
+        $data['service'] = trim($data['service'] ?? '') ?: $offer?->name;
+        if (! filled($data['service'])) {
+            throw ValidationException::withMessages(['service' => 'Elegí una oferta o escribí el servicio de la propuesta.']);
+        }
         $data['currency'] = strtoupper($data['currency']);
-        $group = $proposal?->group_key ?? Proposal::where('lead_id', $lead->id)->where('campaign_id', $campaign?->id)->where('service', $data['service'])->value('group_key') ?? Str::uuid()->toString();
+        $group = $proposal?->group_key ?? Proposal::where('lead_id', $lead->id)->where('campaign_id', $campaign?->id)->where('offer_id', $data['offer_id'])->where('service', $data['service'])->value('group_key') ?? Str::uuid()->toString();
         if (Proposal::where('group_key', $group)->where('version', $data['version'])->when($proposal, fn ($q) => $q->where('id', '!=', $proposal->id))->exists()) {
             throw ValidationException::withMessages(['version' => 'Esa versión ya existe. Editá la propuesta o creá una versión nueva.']);
         }
@@ -164,12 +210,12 @@ class ContactController extends Controller
 
     public function storeProposal(Request $request): mixed
     {
-        return $this->saveProposal($this->proposalData($request));
+        return DB::transaction(fn () => $this->saveProposal($this->proposalData($request)));
     }
 
     public function updateProposal(Request $request, Proposal $proposal): mixed
     {
-        return $this->saveProposal($this->proposalData($request, $proposal), $proposal);
+        return DB::transaction(fn () => $this->saveProposal($this->proposalData($request, $proposal), $proposal));
     }
 
     private function saveProposal(array $data, ?Proposal $proposal = null): mixed
@@ -192,12 +238,25 @@ class ContactController extends Controller
     public function pipeline(Request $request, ?Campaign $campaign = null): mixed
     {
         $query = $campaign ? app(CampaignMembership::class)->query($campaign) : Lead::query();
-        $leads = $query->with(['campaigns', 'suggestedOffer', 'replies', 'proposals'])->orderByDesc('updated_at')->get();
-        if ($campaign) {
-            foreach ($leads as $lead) {
-                $lead->status = app(CampaignMembership::class)->status($lead, $campaign);
+        $leads = $query->with(['campaigns.offer', 'suggestedOffer', 'offerScores.offer'])->orderByDesc('updated_at')->get();
+        $offers = Offer::whereIn('id', $leads->flatMap(fn ($lead) => $lead->campaigns->pluck('pivot.offer_id'))->filter()->unique())->get()->keyBy('id');
+        $opportunities = collect();
+        foreach ($leads as $lead) {
+            $contexts = $campaign ? $lead->campaigns->where('id', $campaign->id) : $lead->campaigns;
+            foreach ($contexts as $context) {
+                $opportunity = clone $lead;
+                $opportunity->status = $context->pivot->status;
+                $opportunity->setRelation('opportunity_campaign', $context);
+                $opportunity->setRelation('opportunity_offer', $offers->get($context->pivot->offer_id) ?? $context->offer ?? $lead->suggestedOffer);
+                $opportunities->push($opportunity);
+            }
+            if ($contexts->isEmpty() && (! $campaign || $lead->campaigns->isEmpty())) {
+                $lead->setRelation('opportunity_campaign', $campaign);
+                $lead->setRelation('opportunity_offer', $lead->suggestedOffer);
+                $opportunities->push($lead);
             }
         }
+        $leads = $opportunities;
         $columns = ['REPLIED', 'INTERESTED', 'PROPOSAL', 'NEGOTIATION', 'WON', 'LOST'];
 
         return view('sales.pipeline', ['campaign' => $campaign, 'columns' => $columns, 'leadsByStatus' => $leads->whereIn('status', $columns)->groupBy('status'), 'statuses' => Lead::STATUSES]);

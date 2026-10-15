@@ -481,7 +481,7 @@ class GeneralWorkflowTest extends TestCase
     public function test_booking_evidence_is_refreshed_without_leaving_obsolete_flags(): void
     {
         $lead = Lead::factory()->create(['website_url' => 'https://negocio.test']);
-        app(LeadEnricher::class)->analyzeWebsiteContent($lead, $lead->website_url, '<title>Negocio</title><p>Reservar online con Calendly</p>');
+        app(LeadEnricher::class)->analyzeWebsiteContent($lead, $lead->website_url, '<title>Negocio</title><a href="https://calendly.com/negocio">Reservar online</a>');
 
         app(LeadEnricher::class)->analyzeWebsiteContent($lead, $lead->website_url, '<title>Negocio</title><p>Contactanos</p>');
 
@@ -641,12 +641,13 @@ class GeneralWorkflowTest extends TestCase
     {
         $lead = Lead::factory()->create(['website_url' => 'https://negocio.test']);
         $enricher = app(LeadEnricher::class);
-        $enricher->analyzeWebsiteContent($lead, $lead->website_url, '<title>Negocio</title><p>Reservar online con Calendly</p>');
+        $enricher->analyzeWebsiteContent($lead, $lead->website_url, '<title>Negocio</title><a href="https://calendly.com/negocio">Reservar online</a>');
         $this->assertDatabaseHas('signals', ['lead_id' => $lead->id, 'type' => 'booking_system_visible']);
 
         $enricher->analyzeWebsiteContent($lead, $lead->website_url, '<title>Negocio</title><p>Contactanos</p>');
 
-        $this->assertDatabaseMissing('signals', ['lead_id' => $lead->id, 'type' => 'booking_system_visible']);
+        $this->assertDatabaseHas('signals', ['lead_id' => $lead->id, 'type' => 'booking_system_visible', 'is_current' => false]);
+        $this->assertDatabaseMissing('signals', ['lead_id' => $lead->id, 'type' => 'booking_system_visible', 'is_current' => true]);
     }
 
     public function test_real_email_records_delivery_and_schedules_followup_with_a_fake_mailer(): void

@@ -3,6 +3,7 @@
 <label>{{ $label }}<input name="{{ $field }}" value="{{ $editingOffer?->$field }}" @required($field === 'name')></label>@endforeach
 <label>Palabras de encaje, separadas por coma<input name="keywords" value="{{ implode(', ', $editingOffer?->rules['keywords'] ?? []) }}"></label>
 <label>Señales de encaje, separadas por coma<input name="match_signals" value="{{ implode(', ', $editingOffer?->rules['signals'] ?? []) }}" placeholder="ads_active, observed_problem"></label>
+<label>Perfil de puntuación<select name="scoring_profile"><option value="">Detectar por el catálogo</option>@foreach(['booking'=>'Gestión de turnos','web'=>'Desarrollo web','ecommerce'=>'Ecommerce','generic'=>'Otros servicios'] as $profile=>$profileLabel)<option value="{{ $profile }}" @selected(($editingOffer?->rules['scoring_profile'] ?? '')===$profile)>{{ $profileLabel }}</option>@endforeach</select></label>
 <label>Encaje mínimo<input type="number" name="minimum_match" value="{{ $editingOffer?->rules['minimum'] ?? 20 }}" min="1"></label>
 </div>
 @foreach (['pains' => 'Problemas que resuelve', 'benefits' => 'Beneficios', 'compatibility_signals' => 'Descripción del encaje', 'assets' => 'Activos disponibles'] as $field => $label)<label>{{ $label }}<textarea name="{{ $field }}">{{ $editingOffer?->$field }}</textarea></label>@endforeach

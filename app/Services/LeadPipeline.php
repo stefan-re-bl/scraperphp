@@ -31,7 +31,7 @@ class LeadPipeline
             if ($from === $status) {
                 return $lead;
             }
-            $lead->update(['status' => $status]);
+            $lead->update($status === 'WON' ? ['status' => $status, 'is_customer' => true] : ['status' => $status]);
             if ($campaign) {
                 $data = ['status' => $status, 'updated_at' => now()];
                 if (in_array($status, ['INTERESTED', 'PROPOSAL', 'NEGOTIATION', 'WON'])) {

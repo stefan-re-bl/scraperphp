@@ -1,0 +1,1 @@
+<a class="button light" role="link" data-whatsapp-open data-whatsapp-number="{{ $whatsappPhone ?? '' }}" @if($whatsappUrl) href="{{ $whatsappUrl }}" @else aria-disabled="true" tabindex="-1" @endif target="_blank" rel="noopener noreferrer">@include('sales.partials.icon', ['name' => 'reply']) Abrir WhatsApp</a>

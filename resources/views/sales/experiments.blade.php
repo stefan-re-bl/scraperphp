@@ -37,15 +37,16 @@
     </form>
 </section>
 
+<section><h2>Asignar variante a un prospecto</h2><p>La asignación es estable. Los contactos reales aportan la muestra; las simulaciones quedan fuera.</p><form method="post" action="{{ route('experiment-assignments.store') }}">@csrf<div class="grid"><label>Prospecto<select name="lead_id">@foreach($leads as $lead)<option value="{{ $lead->id }}">{{ $lead->name }}</option>@endforeach</select></label><label>Experimento<select name="experiment_id">@foreach($experiments->where('status','active') as $experiment)<option value="{{ $experiment->id }}">{{ $experiment->name }}</option>@endforeach</select></label></div><button>Asignar variante</button></form></section>
 <section>
     <table>
-        <tr><th>Experimento</th><th>Variable</th><th>Estado</th><th>Variantes</th></tr>
+        <tr><th>Experimento</th><th>Variable</th><th>Estado</th><th>Variantes y contactos reales</th></tr>
         @foreach ($experiments as $experiment)
             <tr>
                 <td>{{ $experiment->name }}</td>
                 <td>{{ $experiment->variable }}</td>
                 <td>{{ $experiment->status }}</td>
-                <td>{{ $experiment->variants->pluck('name')->join(', ') }}</td>
+                <td>@foreach($experiment->variants as $variant){{ $variant->name }}: {{ $variant->real_attempts_count }} @endforeach</td>
             </tr>
         @endforeach
     </table>

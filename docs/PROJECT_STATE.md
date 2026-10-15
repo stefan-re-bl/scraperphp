@@ -1,359 +1,49 @@
 # Estado del proyecto
 
-Fecha: 2026-09-24
-
-## Objetivo
+Última revisión documental y de esquema: **2026-10-15**. Este archivo es la referencia de resultados fechados; no demuestra que procesos locales iniciados entonces sigan activos. Los procedimientos vigentes están en [Operación](OPERATIONS.md), y los cambios en [Changelog](CHANGELOG.md).
 
-Construir un sistema local para adquirir, priorizar, contactar y medir oportunidades comerciales.
-
-El objetivo principal es conseguir clientes reales.
+## Sistema disponible
 
-El software es un medio. El resultado comercial es la prioridad.
+CRM local con cartera de prospectos/clientes/colaboradores, contactos de organización, servicios y renovaciones. Incluye campañas y oportunidades independientes, scraper con importación incremental, revisión de duplicados y consolidación, evidencia multifuente, puntuación por oferta, snapshots al contacto, cola asistida, respuestas/propuestas, experimentos, exportaciones y CLI comercial.
 
-## Entorno
+El entorno verificado utiliza PHP 8.5, Laravel 13.33.0, SQLite, Blade/JavaScript y Guzzle 8.2.0. Las dependencias reproducibles están en los archivos lock. No se añadieron infraestructura ni llamadas automáticas a APIs de IA. La app sigue siendo local y carece de autenticación para exposición por red.
 
-- Entorno obligatorio: WSL.
-- Directorio del proyecto: `/home/stefa1235/ventas`.
-- Repositorio Git: inicializado.
-- Código existente: no hay código de aplicación.
-- Documentación inicial: creada en `docs/`.
+## Datos y activación verificados
 
-Herramientas detectadas:
+| Observación | Resultado y alcance |
+| --- | --- |
+| Esquema operativo | 13 migraciones aplicadas; las dos de enriquecimiento/scoring se activaron con autorización el 2026-10-15, batch 4. |
+| Cartera | 134 registros: 105 de Google Maps y 29 identidades importadas de Notion. |
+| Notion | 29 contactos asociados y 30 procedencias; fichas/contactos/procedencias/tres importaciones permanecieron exactamente iguales durante la activación. Se excluyeron del recálculo y del piloto. |
+| Campaña de prueba | La campaña de Rosario se eliminó con autorización; los 105 prospectos se conservaron. En la revisión del esquema hay cero campañas y cero ofertas. |
+| Puntuaciones | Se recalcularon localmente los 105 prospectos de Maps. El motor por oferta está activo; sin catálogo no hay filas de puntuación por oferta. |
+| Piloto de sitios | Cinco prospectos de Maps consultados con autorización: uno verificado y cuatro desconocidos. Identidad principal conservada. OSM desactivado y sin envíos comerciales. |
+| Integridad | SQLite correcto, cero errores de claves foráneas y cola vacía al cerrar la activación. |
+| Procesos | Servidor local y worker `sales,default` iniciados al cerrar la activación, sin servicio permanente instalado. Verificar su estado antes de operar. |
 
-- PHP: disponible.
-- Composer: disponible.
-- Node.js: disponible.
-- npm: disponible.
-- Docker: disponible.
-- Git: disponible.
-- `pdo_sqlite`: disponible.
-- `sqlite3` para PHP: disponible.
+La importación original de Notion está completada: 30 filas representan 29 identidades; las decisiones y excepciones se conservan en informes privados. No hay sincronización con su API. La restricción de preservar esa cartera durante mantenimiento continúa vigente.
 
-## Decisiones actuales
-
-1. La fase de planificación está aprobada.
-2. El MVP será local y de una sola persona.
-3. La arquitectura base será Laravel.
-4. Google Maps será la primera fuente de leads.
-5. El scraping se integrará con una herramienta externa.
-6. El scoring inicial usará reglas configurables.
-7. La IA generativa será opcional mediante LLM Bridge.
-8. No se usará una API paga como dependencia del MVP.
-9. WhatsApp no será canal de cold outreach automatizado.
-10. Notion seguirá como CRM personal para clientes ganados.
-11. La base de datos del MVP será SQLite.
-12. El primer importador usará CSV.
-13. La cola de contacto será manual asistida.
-14. No habrá envío automático en P0.
-
-## Repositorios evaluados
-
-Ver `docs/REPOSITORY_EVALUATION.md`.
-
-Selección inicial:
+Los respaldos, huellas y comprobaciones de activación permanecen en `storage/app/private/backups/`; los informes de importación, en `storage/app/private/notion-reports/`. Están fuera de Git y pueden contener datos personales. No se repitieron importaciones ni consultas externas durante la reorganización documental.
 
-- Adquisición desde Google Maps: `gosom/google-maps-scraper`.
-- Validación de email: no integrar en MVP inicial.
-- CRM externo: no integrar en MVP inicial.
-- Pipeline comercial completo externo: no integrar.
-
-## P0 implementado
-
-El primer incremento P0 está implementado.
-
-Funciona este circuito:
-
-1. Crear oferta.
-2. Crear campaña.
-3. Importar leads desde CSV.
-4. Deduplicar por fuente, dominio, email, teléfono o nombre + ubicación.
-5. Calcular scoring determinista básico.
-6. Enviar leads útiles a cola manual.
-7. Registrar contacto realizado fuera de la app.
-8. Registrar respuesta.
-9. Pausar seguimientos pendientes tras respuesta.
-10. Clasificar respuesta.
-11. Actualizar pipeline con historial.
-12. Registrar propuesta con versión.
-13. Registrar cierre o pérdida.
-14. Ver métricas.
-15. Exportar CSV.
-16. Exportar JSON estructurado.
-17. Descargar snapshot SQLite.
+## Validación técnica registrada
 
-## Verificación histórica
+Suite repetida antes de publicar la consolidación documental: **345 pruebas y 1629 aserciones correctas**. También pasaron Pint, sintaxis de 159 archivos PHP, compilación/sintaxis de 111 vistas temporales, JavaScript y build. La activación anterior verificó HTTP 200 de diez rutas/pantallas/exportaciones locales.
 
-- `php artisan migrate:fresh`: correcto.
-- `php artisan test`: 7 tests correctos.
-- `php artisan route:list`: rutas P0 registradas.
-- Prueba manual de circuito completo: correcta.
+La suite usa SQLite en memoria, almacenamiento/logs/vistas temporales, HTTP bloqueado salvo simulación y procesos/correo simulados. La regresión de transporte inicializa cURL sin ejecutar una conexión; detectó el conflicto de opciones raw de proxy/redirección y pasa con las opciones de alto nivel. El piloto externo autorizado fue una operación separada de los tests.
 
-La prueba manual importó dos leads.
+Adquisición mantuvo siete consultas con uno y 25 prospectos sintéticos, frente a 52/340 de la auditoría inicial. Esto comprueba estabilidad del número de consultas, no carga de producción.
 
-También registró:
+Los informes con detalle, escenarios y limitaciones están en [Archivo histórico](archive/README.md). La reorganización comprobó 246 enlaces locales y sus anclas, referencias a código y ayuda/opciones de 12 comandos Artisan. Conservó los 17 originales del archivo histórico y redujo la documentación vigente a 11 documentos. Las huellas confirmaron que no cambió código de aplicación ni la base operativa durante esta tarea. La revisión de archivos para publicación no encontró bases, ZIP, formatos de credenciales reconocibles ni valores de contacto de Notion.
 
-- contacto externo;
-- respuesta interesada;
-- follow-up pausado;
-- propuesta ganada;
-- métricas actualizadas.
+## Limitaciones pendientes
 
-## Cómo ejecutar
+- Catálogo comercial vacío: falta definir/cargar una oferta real antes de seleccionar por puntuación de producto.
+- Pesos iniciales sin eficacia comercial demostrada; no hay ganadores A/B ni ajustes autónomos.
+- Históricos sin snapshot permanecen desconocidos; no se rellenaron con información posterior.
+- OSM desactivado; habilitarlo requiere revisar configuración y condiciones del endpoint.
+- No se comprobaron entrega SMTP real, disponibilidad pública ni carga masiva con cartera operativa.
+- JavaScript remoto y pruebas funcionales de compra/formulario quedan fuera del enriquecimiento; una publicación visible no demuestra que funcione toda la operación.
 
-Usa siempre el directorio WSL nativo:
+## Siguiente prioridad
 
-```bash
-cd /home/stefa1235/ventas
-php artisan serve
-```
-
-Luego abre:
-
-```text
-http://127.0.0.1:8000
-```
-
-## Suite comercial implementada
-
-Se amplió el sistema más allá del P0.
-
-Ahora incluye:
-
-- queries por campaña;
-- orquestación de `gosom/google-maps-scraper`;
-- dry-run de scraping;
-- importación automática del CSV generado;
-- enriquecimiento determinista;
-- señales con evidencia;
-- scoring configurable;
-- asignación simple de oferta;
-- cola operativa ampliada;
-- plantillas con variables;
-- email SMTP con dry-run;
-- follow-ups;
-- experimentos A/B;
-- métricas segmentadas;
-- LLM Bridge;
-- exclusiones;
-- kill switch;
-- exportación analítica.
-
-## UX operativa actual
-
-La aplicación ahora se organiza por:
-
-- Inicio;
-- Campañas;
-- Leads;
-- Configuración.
-
-La campaña es el workspace principal.
-
-Cada campaña contiene:
-
-- Resumen;
-- Leads;
-- Adquisición;
-- Contacto;
-- Pipeline;
-- Experimentos;
-- Métricas.
-
-La creación de campaña muestra solo decisiones operativas actuales:
-
-- nombre;
-- segmento;
-- país;
-- ciudad;
-- oferta;
-- fuente;
-- límite de adquisición.
-
-La fuente es un selector cerrado.
-
-Canal, modo, CTA y follow-ups no son decisiones principales.
-
-El modo queda fijo en `manual` mientras no exista mensajería automática real.
-
-La vista de Leads tiene filtros en query string.
-
-Esos filtros se reutilizan en:
-
-- listado;
-- exportación CSV;
-- exportación JSON;
-- `analytics_export.csv`;
-- teléfonos normalizados;
-- acciones masivas.
-
-La exportación de teléfonos genera `telefonos.txt`.
-
-El archivo contiene una sola línea.
-
-Los números salen separados por comas.
-
-El formato es `+54` seguido solo por dígitos.
-
-## Enriquecimiento actual
-
-El enriquecimiento sigue siendo determinista.
-
-No usa IA.
-
-No cambió el scoring.
-
-Ahora detecta:
-
-- teléfono válido o inválido;
-- teléfono probablemente móvil;
-- WhatsApp visible;
-- email visible en la web;
-- formulario visible;
-- Instagram, Facebook y Doctoralia;
-- sistemas de turnos conocidos;
-- dependencia manual para pedir turnos;
-- complejidad operativa por equipo, sedes o especialidades;
-- sitio débil por poco contenido o título ausente.
-
-El scoring preserva estas señales.
-
-Los pesos y reglas de scoring no cambiaron.
-
-La ficha de lead muestra:
-
-- identidad;
-- diagnóstico;
-- score;
-- señales;
-- posibles duplicados;
-- actividad;
-- acciones comerciales.
-
-## Verificación actual
-
-- `php artisan view:clear`: correcto.
-- `./vendor/bin/pint --dirty`: correcto.
-- `php artisan test`: 19 tests correctos, 65 assertions.
-- `php artisan route:list`: 49 rutas registradas.
-- Render HTTP por tests: Inicio, Campañas, Workspace, Adquisición, Leads, Cola, Pipeline y Configuración.
-- No se enviaron emails reales.
-- No se contactaron leads reales.
-
-## Corrección de adquisición real
-
-Fecha: 2026-09-25
-
-El scraper real ya no bloquea el request web.
-
-Ahora la pantalla inicia el run y vuelve al workspace.
-
-El comando `scraper:execute {run}` ejecuta o completa el run en segundo plano.
-
-Se recuperó el ScrapeRun #3.
-
-Resultado:
-
-- estado: `completed`;
-- filas crudas: 56;
-- leads importados: 56;
-- duplicados fuertes: 0;
-- errores: 0.
-
-## Validación real de scraper
-
-Fecha: 2026-09-24
-
-Integración validada con Docker:
-
-- Imagen: `gosom/google-maps-scraper:latest`.
-- Image ID: `e205c02913c5`.
-- Versión del scraper: `v1.18.1-549e4b5`.
-- Comando base real: `google-maps-scraper -input <archivo> -results <csv>`.
-- CSV es el formato por defecto.
-- `-json` cambia la salida a JSON.
-- `-input` requiere un archivo con una query por línea.
-- `-results` define el archivo de salida.
-
-Ajuste aplicado:
-
-- Se eliminó `-csv`, porque no existe.
-- Se dejó de usar `-results` como límite, porque es ruta de archivo.
-- Se eliminó `-fast-mode`, porque exige `-geo`.
-- Se agregó archivo de entrada por query.
-- Se usa Docker con volumen sobre `storage/app/scrapes`.
-- Se mantiene `-lang es`, `-c 1` y `-depth` bajo.
-- Como el scraper no tiene flag exacto de cantidad, la app limita filas importadas con `result_limit`.
-
-Prueba real:
-
-- Query: `psicólogos Córdoba Argentina`.
-- Proxies: no usados.
-- Evasión: no usada.
-- Contactos: no realizados.
-- Resultado del scraper: `completed`.
-- CSV generado: correcto.
-- Filas crudas: 20.
-- Límite importado: 5 filas procesadas.
-- Leads importados: 2.
-- Duplicados detectados: 3.
-- Errores: 0.
-- Leads en cola: 2.
-- Leads enriquecidos: 2.
-- Componentes de scoring: 11.
-- Contact attempts: 0.
-
-Flujo validado:
-
-```text
-scraper -> CSV -> importación -> deduplicación -> enriquecimiento -> scoring -> cola
-```
-
-## Próximo bloque operativo
-
-Ejecutar piloto comercial P0.
-
-Campaña configurada:
-
-- `Piloto P0 salud Argentina`.
-- Segmento: psicólogos, psiquiatras y consultorios pequeños.
-- País: Argentina.
-- Oferta: gestor de consultorio/turnos.
-- Canal: email manual.
-- Tamaño objetivo: 50 a 100 leads.
-- Primer análisis: al completar 50 contactos procesados.
-
-Ver protocolo en `docs/PILOT.md`.
-
-Ejecutar campaña real y validar datos.
-
-No continuar con:
-
-- integraciones externas nuevas.
-
-## Deuda técnica real
-
-- El scoring tiene reglas iniciales simples.
-- El importador CSV cubre encabezados comunes, no todos los formatos posibles.
-- La UI de logs todavía es básica.
-- Falta importación masiva de exclusiones.
-- El pipeline no tiene drag-and-drop. Usa movimientos explícitos con historial.
-- Las métricas segmentadas de campaña reutilizan la capa existente y todavía pueden mejorar en período y aislamiento visual.
-
-## Documentos creados
-
-- `docs/ARCHITECTURE.md`
-- `docs/BACKLOG.md`
-- `docs/CHANGELOG.md`
-- `docs/DATA_MODEL.md`
-- `docs/EXPERIMENTS.md`
-- `docs/MVP_SCOPE.md`
-- `docs/OUTREACH_RULES.md`
-- `docs/PROJECT_STATE.md`
-- `docs/REPOSITORY_EVALUATION.md`
-
-## Riesgos abiertos
-
-- Scraping de Google Maps puede infringir términos de servicio.
-- La validación SMTP de emails puede fallar por bloqueos de proveedores.
-- El envío outbound requiere reglas por país y canal.
-- El sistema debe evitar automatizar mensajes reales durante pruebas.
+Definir la oferta real y preparar una muestra pequeña, con autorización específica para las acciones comerciales. Los criterios están en [Backlog](BACKLOG.md); no hay una campaña histórica preconfigurada que deba reanudarse por defecto.

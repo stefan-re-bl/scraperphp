@@ -115,6 +115,7 @@ class CommercialSuiteTest extends TestCase
     public function test_lead_filters_combine_and_keep_query_string_context(): void
     {
         [$campaign, $lead] = $this->fixture();
+        $campaign->update(['offer_id' => null]);
         $this->attachLeadToCampaign($lead, $campaign);
         Lead::create([
             'name' => 'Otro rubro',
@@ -136,6 +137,7 @@ class CommercialSuiteTest extends TestCase
     public function test_filtered_lead_export_does_not_include_leads_outside_filter(): void
     {
         [$campaign, $lead] = $this->fixture();
+        $campaign->update(['offer_id' => null]);
         $this->attachLeadToCampaign($lead, $campaign);
         Lead::create([
             'name' => 'Lead Fuera',
@@ -175,6 +177,7 @@ class CommercialSuiteTest extends TestCase
     public function test_phone_export_normalizes_argentina_numbers_and_respects_filters(): void
     {
         [$campaign, $lead] = $this->fixture();
+        $campaign->update(['offer_id' => null]);
         $lead->update(['phone' => '(381) 672-2676']);
         $this->attachLeadToCampaign($lead, $campaign);
 
@@ -217,7 +220,9 @@ class CommercialSuiteTest extends TestCase
                     Pedir turno por WhatsApp o reservar online con Doctoralia.
                     <a href="https://instagram.com/centronorte">Instagram</a>
                     <a href="https://facebook.com/centronorte">Facebook</a>
-                    <form><input name="email"></form>
+                    <a href="https://doctoralia.com.ar/centro-norte">Reservar online</a>
+                    <a href="https://wa.me/543516000001">WhatsApp</a>
+                    <form><input name="email"><textarea name="message"></textarea></form>
                     contacto@centronorte.test
                 </body>
             </html>
@@ -249,7 +254,8 @@ class CommercialSuiteTest extends TestCase
         app(LeadScorer::class)->score($lead->refresh());
 
         $this->assertDatabaseHas('signals', ['lead_id' => $lead->id, 'type' => 'phone_format_valid']);
-        $this->assertDatabaseHas('signals', ['lead_id' => $lead->id, 'type' => 'manual_contact_dependency']);
+        $this->assertDatabaseMissing('signals', ['lead_id' => $lead->id, 'type' => 'manual_contact_dependency', 'is_current' => true]);
+        $this->assertDatabaseHas('signals', ['lead_id' => $lead->id, 'type' => 'no_website', 'evidence_kind' => 'unknown']);
         $this->assertDatabaseHas('score_components', ['lead_id' => $lead->id, 'component' => 'contact_quality_phone']);
     }
 

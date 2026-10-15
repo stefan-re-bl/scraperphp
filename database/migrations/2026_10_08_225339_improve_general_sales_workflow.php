@@ -152,12 +152,17 @@ return new class extends Migration
         Schema::dropIfExists('application_preferences');
         Schema::dropIfExists('saved_lead_views');
         Schema::dropIfExists('campaign_lead');
-        Schema::table('leads', fn (Blueprint $table) => $table->dropColumn(['city', 'contact_person', 'contact_role', 'relationship_type', 'tags', 'next_action_at', 'data_quality_score', 'contactability_score', 'offer_fit_score', 'offer_match_reason']));
+        Schema::table('leads', function (Blueprint $table) {
+            $table->dropIndex(['city']);
+            $table->dropIndex(['next_action_at']);
+            $table->dropColumn(['city', 'contact_person', 'contact_role', 'relationship_type', 'tags', 'next_action_at', 'data_quality_score', 'contactability_score', 'offer_fit_score', 'offer_match_reason']);
+        });
         foreach (['replies', 'proposals', 'lead_status_histories'] as $name) {
             Schema::table($name, fn (Blueprint $table) => $table->dropConstrainedForeignId('campaign_id'));
         }
         Schema::table('proposals', function (Blueprint $table) {
             $table->dropConstrainedForeignId('offer_id');
+            $table->dropIndex(['group_key']);
             $table->dropColumn('group_key');
         });
         Schema::table('scoring_rules', function (Blueprint $table) {

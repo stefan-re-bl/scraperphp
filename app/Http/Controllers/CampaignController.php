@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\Campaign;
 use App\Models\ContactAttempt;
 use App\Models\Lead;
-use App\Models\MessageTemplate;
 use App\Models\Offer;
 use App\Models\Reply;
 use App\Models\SavedLeadView;
@@ -29,45 +28,34 @@ class CampaignController extends Controller
 
     public function campaignWorkspace(Request $request, Campaign $campaign, MetricsService $metrics, LeadFilterService $filters): mixed
     {
-        $request->validate(['from' => 'nullable|date', 'to' => 'nullable|date|after_or_equal:from', 'dimension' => 'nullable|in:campaign,channel,offer,segment,city,country,source,language,variant']);
+        $request->validate(['tab' => 'nullable|in:summary,leads,acquisition,contact,pipeline,experiments,metrics', 'from' => 'nullable|date', 'to' => 'nullable|date|after_or_equal:from', 'dimension' => 'nullable|in:campaign,channel,offer,segment,city,country,source,language,variant']);
         $tab = $request->query('tab', 'summary');
         $baseFilters = ['campaign' => $campaign->id] + $filters->fromRequest($request);
-        $leadQuery = $filters->query($baseFilters);
-        $leads = $tab === 'leads' ? $leadQuery->paginate(25)->withQueryString() : collect();
+        $isSummary = $tab === 'summary';
+        $isLeads = $tab === 'leads';
+        $isAcquisition = $tab === 'acquisition';
 
         return view('sales.campaign-workspace', [
-            'campaign' => $campaign->load('offer'),
-            'tab' => $tab,
-            'stats' => app(MetricsService::class)->campaignStats($campaign),
-            'filters' => $baseFilters,
-            'filterQuery' => $filters->cleanQuery($baseFilters),
-            'savedViews' => SavedLeadView::where('scope', 'campaign:'.$campaign->id)->orderBy('name')->get(),
-            'leads' => $leads,
+            'campaign' => $campaign->load('offer'), 'tab' => $tab,
+            'stats' => $isSummary || $tab === 'metrics' ? $metrics->campaignStats($campaign) : null,
+            'filters' => $baseFilters, 'filterQuery' => $filters->cleanQuery($baseFilters),
+            'savedViews' => $isLeads ? SavedLeadView::where('scope', 'campaign:'.$campaign->id)->orderBy('name')->get() : collect(),
+            'leads' => $isLeads ? $filters->query($baseFilters, ['campaigns', 'suggestedOffer', 'offerScores.offer', 'signalRows', 'possibleDuplicateOf'])->paginate(25)->withQueryString() : collect(),
             'statuses' => Lead::STATUSES,
             'offers' => Offer::where('active', true)->orWhere('id', $campaign->offer_id)->orderBy('name')->get(),
-            'campaigns' => Campaign::orderBy('name')->get(),
-            'sources' => Lead::select('source')->distinct()->pluck('source')->filter()->values(),
-            'signals' => DB::table('signals')->select('type')->distinct()->pluck('type')->filter()->values(),
-            'queries' => $campaign->queries()->latest()->limit(20)->get(),
-            'scrapeRuns' => $campaign->scrapeRuns()->latest()->limit(20)->get(),
-            'imports' => $campaign->importRuns()->latest()->limit(20)->get(),
-            'queueLeads' => app(CampaignMembership::class)->query($campaign, ['QUEUED', 'CONTACTED'])->with(['suggestedOffer', 'signalRows', 'scoreComponents', 'contactAttempts'])->limit(20)->get(),
-            'templates' => MessageTemplate::where('active', true)->get(),
-            'experiments' => $campaign->experiments()->with('variants')->latest()->get(),
-            'metricRows' => $metrics->segmented($request->query('dimension', 'city'), ['campaign' => $campaign->id] + $request->only(['from', 'to'])),
+            'campaigns' => $isLeads ? Campaign::orderBy('name')->get() : collect(),
+            'sources' => $isLeads ? Lead::select('source')->distinct()->pluck('source')->filter()->values() : collect(),
+            'signals' => $isLeads ? DB::table('signals')->select('type')->distinct()->pluck('type')->filter()->values() : collect(),
+            'queries' => $isSummary || $isAcquisition ? $campaign->queries()->latest()->limit(20)->get() : collect(),
+            'scrapeRuns' => $isAcquisition ? $campaign->scrapeRuns()->latest()->limit(20)->get() : collect(),
+            'imports' => $isAcquisition ? $campaign->importRuns()->latest()->limit(20)->get() : collect(),
+            'queueLeads' => $tab === 'contact' ? app(CampaignMembership::class)->ready($campaign)->with(['campaigns', 'suggestedOffer', 'offerScores.offer', 'signalRows', 'scoreComponents', 'contactAttempts'])->orderByRaw('resolved_score is null')->orderByDesc('resolved_score')->limit(20)->get() : collect(),
+            'templates' => collect(),
+            'experiments' => $tab === 'experiments' ? $campaign->experiments()->with(['variants' => fn ($query) => $query->withCount(['contactAttempts as real_attempts_count' => fn ($attempts) => $attempts->where('dry_run', false)->where('status', 'sent')->whereNotNull('performed_at')])])->latest()->get() : collect(),
+            'metricRows' => $tab === 'metrics' ? $metrics->segmented($request->query('dimension', 'city'), ['campaign' => $campaign->id] + $request->only(['from', 'to'])) : [],
             'dimension' => $request->query('dimension', 'city'),
-            'recentReplies' => Reply::with('lead')
-                ->where('campaign_id', $campaign->id)
-                ->latest()
-                ->limit(8)
-                ->get(),
-            'pendingFollowUps' => ContactAttempt::with('lead')
-                ->where('campaign_id', $campaign->id)
-                ->where('status', 'planned')
-                ->whereDate('due_at', '<=', now())
-                ->latest()
-                ->limit(8)
-                ->get(),
+            'recentReplies' => $isSummary ? Reply::with('lead')->where('campaign_id', $campaign->id)->latest()->limit(8)->get() : collect(),
+            'pendingFollowUps' => $isSummary ? ContactAttempt::with('lead')->where('campaign_id', $campaign->id)->where('status', 'planned')->where('due_at', '<=', now())->latest()->limit(8)->get() : collect(),
         ]);
     }
 
@@ -139,7 +127,7 @@ class CampaignController extends Controller
     public function attachLead(Request $request, Campaign $campaign): mixed
     {
         $data = $request->validate(['lead_id' => 'required|exists:leads,id']);
-        app(CampaignMembership::class)->attach(Lead::findOrFail($data['lead_id']), $campaign);
+        app(CampaignMembership::class)->attach(Lead::findOrFail($data['lead_id']), $campaign, true);
 
         return back()->with('status', 'Prospecto vinculado.');
     }

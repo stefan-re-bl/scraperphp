@@ -10,7 +10,7 @@ class LeadSource extends Model
 
     protected function casts(): array
     {
-        return ['observed_at' => 'datetime'];
+        return ['observed_at' => 'datetime', 'metadata' => 'array'];
     }
 
     public function lead()

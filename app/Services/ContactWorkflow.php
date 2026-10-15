@@ -38,6 +38,7 @@ class ContactWorkflow
                 throw ValidationException::withMessages(['lead_id' => 'Este paso ya fue registrado.']);
             }
             unset($data['contact_attempt_id']);
+            $data = array_merge($data, app(ExperimentService::class)->attribution($lead, $campaign, $data));
             $data['offer_id'] = $this->memberships->offer($lead, $campaign)?->id;
             $data['status'] = $performed ? 'sent' : 'planned';
             $data['dry_run'] = false;
@@ -49,6 +50,7 @@ class ContactWorkflow
                 $attempt = ContactAttempt::create($data);
             }
             if ($performed) {
+                app(ScoreSnapshotService::class)->capture($attempt);
                 $this->pipeline->move($lead, 'CONTACTED', 'contact_attempt_recorded', $campaign);
                 app(CampaignMembership::class)->nextAction($lead, $campaign, null);
                 $this->followUps->scheduleNext($lead, $campaign, $attempt->step);

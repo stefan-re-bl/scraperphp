@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Campaign;
+use App\Models\Offer;
 use App\Services\BackupService;
 use App\Services\ExportService;
 use App\Services\LeadFilterService;
@@ -57,10 +59,10 @@ class ReportingController extends Controller
 
     public function segmentedMetrics(Request $request, MetricsService $metrics): mixed
     {
-        $data = $request->validate(['dimension' => 'nullable|in:campaign,channel,offer,segment,city,country,source,language,variant', 'from' => 'nullable|date', 'to' => 'nullable|date|after_or_equal:from', 'campaign' => 'nullable|exists:campaigns,id']);
+        $data = $request->validate(['dimension' => 'nullable|in:campaign,channel,offer,segment,city,country,source,language,variant', 'from' => 'nullable|date', 'to' => 'nullable|date|after_or_equal:from', 'campaign' => 'nullable|exists:campaigns,id', 'offer_id' => 'nullable|exists:offers,id', 'rule_version' => 'nullable|string|max:255', 'min_score' => 'nullable|integer|min:0|max:100', 'max_score' => 'nullable|integer|min:0|max:100']);
         $dimension = $data['dimension'] ?? 'campaign';
 
-        return view('sales.metrics', ['dimension' => $dimension, 'rows' => $metrics->segmented($dimension, $data)]);
+        return view('sales.metrics', ['dimension' => $dimension, 'rows' => $metrics->segmented($dimension, $data), 'evaluation' => $metrics->scoreEvaluation($data), 'campaigns' => Campaign::orderBy('name')->get(), 'offers' => Offer::orderBy('name')->get()]);
     }
 
     public function verifyBackup(Request $request, BackupService $backups): mixed

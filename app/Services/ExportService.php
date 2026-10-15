@@ -3,9 +3,12 @@
 namespace App\Services;
 
 use App\Models\Campaign;
+use App\Models\ClientService;
 use App\Models\ContactAttempt;
 use App\Models\ImportRun;
 use App\Models\Lead;
+use App\Models\LeadContact;
+use App\Models\LeadOfferScore;
 use App\Models\LeadSource;
 use App\Models\LeadStatusHistory;
 use App\Models\Offer;
@@ -21,6 +24,7 @@ class ExportService
 {
     public const DATASETS = [
         'leads' => Lead::class,
+        'offer_scores' => LeadOfferScore::class,
         'sources' => LeadSource::class,
         'campaigns' => Campaign::class,
         'scoring' => ScoreComponent::class,
@@ -31,6 +35,8 @@ class ExportService
         'proposals' => Proposal::class,
         'offers' => Offer::class,
         'imports' => ImportRun::class,
+        'contacts' => LeadContact::class,
+        'services' => ClientService::class,
     ];
 
     public function __construct(private readonly LeadFilterService $leadFilters) {}
@@ -38,8 +44,6 @@ class ExportService
     public function csv(string $dataset, array $filters = []): StreamedResponse
     {
         abort_unless(isset(self::DATASETS[$dataset]), 404);
-
-        $class = self::DATASETS[$dataset];
 
         return response()->streamDownload(function () use ($dataset, $filters) {
             $handle = fopen('php://output', 'w');
@@ -53,7 +57,7 @@ class ExportService
                         fputcsv($handle, array_keys($data), escape: '');
                         $wroteHeader = true;
                     }
-                    fputcsv($handle, array_map(fn ($value) => is_string($value) && ! is_numeric($value) && preg_match('/^[=+@\-\t\r]/', $value) ? "'".$value : $value, $data), escape: '');
+                    CsvSerializer::row($handle, $data);
                 }
             });
 
@@ -65,10 +69,11 @@ class ExportService
     {
         $data = [];
 
+        $selectedIds = $this->leadFilters->query($leadFilters)->pluck('leads.id')->all();
         foreach (self::DATASETS as $name => $class) {
-            $data[$name] = $this->datasetQuery($name, $leadFilters)->withoutEagerLoads()->get();
+            $data[$name] = $this->datasetQuery($name, $leadFilters, $selectedIds)->withoutEagerLoads()->get();
         }
-        $ids = $this->leadFilters->query($leadFilters)->pluck('leads.id');
+        $ids = $selectedIds;
         $data['opportunities'] = DB::table('campaign_lead')->whereIn('lead_id', $ids)->when($leadFilters['campaign'] ?? null, fn ($q, $id) => $q->where('campaign_id', $id))->get();
 
         return [
@@ -81,7 +86,7 @@ class ExportService
     {
         return response()->streamDownload(function () use ($filters) {
             $handle = fopen('php://output', 'w');
-            fputcsv($handle, [
+            CsvSerializer::row($handle, [
                 'lead_id',
                 'lead',
                 'campaign',
@@ -102,44 +107,68 @@ class ExportService
                 'days_to_proposal',
                 'offer',
                 'variant',
+                'reply_attempt_id', 'reply_channel', 'reply_variant',
+                'current_offer_score_known', 'current_offer_score', 'current_offer_score_version',
+                'historical_score_known', 'historical_score', 'historical_score_version', 'historical_score_calculated_at',
+                'historical_offer_id', 'historical_opportunity_id',
             ]);
 
-            $this->leadFilters->query($filters)->chunk(200, function ($leads) use ($handle, $filters) {
+            $this->leadFilters->query($filters, ['contactAttempts.campaign', 'replies', 'proposals', 'campaigns.offer', 'suggestedOffer', 'offerScores' => fn ($q) => $q->current()->with('offer')])->chunk(200, function ($leads) use ($handle, $filters) {
+                $offers = Offer::whereIn('id', $leads->flatMap(fn ($lead) => $lead->campaigns->pluck('pivot.offer_id'))->filter()->unique())->get()->keyBy('id');
                 foreach ($leads as $lead) {
-                    $attempts = $lead->contactAttempts->where('status', 'sent')->where('dry_run', false)->whereNotNull('performed_at');
-                    if ($filters['campaign'] ?? null) {
-                        $attempts = $attempts->where('campaign_id', $filters['campaign']);
+                    $contexts = ($filters['campaign'] ?? null) ? $lead->campaigns->where('id', (int) $filters['campaign']) : $lead->campaigns;
+                    if ($contexts->isEmpty()) {
+                        $contexts = collect([null]);
                     }
-                    $firstContact = $attempts->sortBy('performed_at')->first();
-                    $replies = ($filters['campaign'] ?? null) ? $lead->replies->where('campaign_id', $filters['campaign']) : $lead->replies;
-                    $reply = $replies->sortBy('received_at')->first();
-                    $proposals = ($filters['campaign'] ?? null) ? $lead->proposals->where('campaign_id', $filters['campaign']) : $lead->proposals;
-                    $proposal = $proposals->whereNotNull('sent_at')->sortBy('sent_at')->first();
-                    $status = ($filters['campaign'] ?? null) ? (DB::table('campaign_lead')->where('lead_id', $lead->id)->where('campaign_id', $filters['campaign'])->value('status') ?? $lead->status) : $lead->status;
-                    $campaign = $firstContact ? DB::table('campaigns')->find($firstContact->campaign_id) : null;
+                    foreach ($contexts as $context) {
+                        $attempts = $lead->contactAttempts->where('status', 'sent')->where('dry_run', false)->whereNotNull('performed_at')
+                            ->where('campaign_id', $context?->id);
+                        if ($filters['channel'] ?? null) {
+                            $attempts = $attempts->where('channel', $filters['channel']);
+                        }
+                        $firstContact = $attempts->sortBy('performed_at')->first();
+                        $replies = $lead->replies->where('campaign_id', $context?->id);
+                        if ($filters['channel'] ?? null) {
+                            $replies = $replies->whereIn('contact_attempt_id', $attempts->modelKeys());
+                        }
+                        $reply = $replies->sortBy('received_at')->first();
+                        $replyAttempt = $reply ? $lead->contactAttempts->firstWhere('id', $reply->contact_attempt_id) : null;
+                        $proposal = $lead->proposals->where('campaign_id', $context?->id)->whereNotNull('sent_at')->sortBy('sent_at')->first();
+                        $status = $context?->pivot->status ?? $lead->status;
+                        $campaign = $context ?? $firstContact?->campaign;
+                        $offer = $context ? $offers->get($context->pivot->offer_id) ?? $context->offer : $lead->suggestedOffer;
 
-                    fputcsv($handle, [
-                        $lead->id,
-                        $lead->name,
-                        $campaign?->name,
-                        $lead->source,
-                        $lead->segment,
-                        $lead->city ?: $lead->location,
-                        $lead->country,
-                        $lead->score_total,
-                        $firstContact?->channel,
-                        $firstContact?->performed_at,
-                        $reply ? 1 : 0,
-                        $reply?->category,
-                        in_array($status, ['INTERESTED', 'PROPOSAL', 'NEGOTIATION', 'WON'], true) ? 1 : 0,
-                        $proposal ? 1 : 0,
-                        $status === 'WON' ? 1 : 0,
-                        $status === 'LOST' ? 1 : 0,
-                        $firstContact && $reply ? $firstContact->performed_at->diffInDays($reply->received_at) : null,
-                        $firstContact && $proposal?->sent_at ? $firstContact->performed_at->diffInDays($proposal->sent_at) : null,
-                        $lead->suggestedOffer?->name,
-                        $firstContact?->variant,
-                    ]);
+                        $currentScore = $lead->offerScores->firstWhere('offer_id', $offer?->id);
+                        $currentKnown = $currentScore !== null;
+                        $snapshot = $firstContact?->score_snapshot;
+                        $historicalKnown = $firstContact && is_array($snapshot) && app(MetricsService::class)->validSnapshot($firstContact, $snapshot);
+                        CsvSerializer::row($handle, [
+                            $lead->id,
+                            $lead->name,
+                            $campaign?->name,
+                            $lead->source,
+                            $lead->segment,
+                            $lead->city ?: $lead->location,
+                            $lead->country,
+                            $lead->score_total,
+                            $firstContact?->channel,
+                            $firstContact?->performed_at,
+                            $reply ? 1 : 0,
+                            $reply?->category,
+                            in_array($status, ['INTERESTED', 'PROPOSAL', 'NEGOTIATION', 'WON'], true) ? 1 : 0,
+                            $proposal ? 1 : 0,
+                            $status === 'WON' ? 1 : 0,
+                            $status === 'LOST' ? 1 : 0,
+                            $firstContact && $reply ? $firstContact->performed_at->diffInDays($reply->received_at) : null,
+                            $firstContact && $proposal?->sent_at ? $firstContact->performed_at->diffInDays($proposal->sent_at) : null,
+                            $offer?->name,
+                            $firstContact?->variant,
+                            $replyAttempt?->id, $replyAttempt?->channel, $replyAttempt?->variant,
+                            $currentKnown ? 1 : 0, $currentKnown ? $currentScore->total : null, $currentScore?->rule_version,
+                            $historicalKnown ? 1 : 0, $historicalKnown ? $snapshot['total'] : null, $historicalKnown ? $snapshot['rule_version'] : null, $historicalKnown ? $snapshot['calculated_at'] : null,
+                            $snapshot['offer_id'] ?? null, $snapshot['opportunity_id'] ?? null,
+                        ]);
+                    }
                 }
             });
 
@@ -168,20 +197,35 @@ class ExportService
         }, 'telefonos.txt', ['Content-Type' => 'text/plain; charset=UTF-8']);
     }
 
-    private function datasetQuery(string $dataset, array $filters): Builder
+    public function datasetQuery(string $dataset, array $filters, ?array $selectedIds = null): Builder
     {
         $class = self::DATASETS[$dataset];
         if ($dataset === 'leads') {
-            return $this->leadFilters->query($filters);
+            return $selectedIds === null ? $this->leadFilters->query($filters) : Lead::whereIn('id', $selectedIds);
         }
         $query = $class::query();
         if ($filters === []) {
             return $query;
         }
-        $ids = $this->leadFilters->query($filters)->pluck('leads.id');
+        $ids = collect($selectedIds ?? $this->leadFilters->query($filters)->pluck('leads.id')->all());
         $campaign = $filters['campaign'] ?? null;
-        if (in_array($dataset, ['sources', 'scoring', 'signals', 'contact_attempts', 'replies', 'pipeline', 'proposals'])) {
+        if (in_array($dataset, ['sources', 'scoring', 'offer_scores', 'signals', 'contact_attempts', 'replies', 'pipeline', 'proposals', 'contacts', 'services'])) {
             $query->whereIn('lead_id', $ids);
+            if ($dataset === 'offer_scores') {
+                $query->when($filters['rule_version'] ?? null, fn ($q, $version) => $q->where('rule_version', $version));
+                $query->when($filters['score_offer_id'] ?? null, fn ($q, $id) => $q->where('offer_id', $id));
+                if ($campaign) {
+                    $query->whereExists(fn ($q) => $q->selectRaw('1')->from('campaign_lead')->whereColumn('campaign_lead.lead_id', 'lead_offer_scores.lead_id')->whereColumn('campaign_lead.offer_id', 'lead_offer_scores.offer_id')->where('campaign_id', $campaign));
+                }
+            }
+            if ($dataset === 'signals') {
+                $query->when($filters['rule_version'] ?? null, fn ($q, $version) => $q->where('rule_version', $version))
+                    ->when($filters['evidence_source'] ?? null, fn ($q, $source) => $q->where('source', $source))
+                    ->when($filters['evidence_review'] ?? null, fn ($q, $review) => $q->where('review_status', $review));
+            }
+            if ($dataset === 'contact_attempts') {
+                $query->when($filters['rule_version'] ?? null, fn ($q, $version) => $q->where('score_snapshot->rule_version', $version));
+            }
             if ($campaign && in_array($dataset, ['contact_attempts', 'replies', 'pipeline', 'proposals'])) {
                 $query->where('campaign_id', $campaign);
             }
@@ -204,7 +248,7 @@ class ExportService
         if ($dataset === 'imports') {
             return $query->whereIn('id', $sourceIds)->when($campaign, fn ($q) => $q->where('campaign_id', $campaign));
         }
-        $offerIds = Lead::whereIn('id', $ids)->pluck('suggested_offer_id')->merge(Campaign::whereIn('id', $campaignIds)->pluck('offer_id'))
+        $offerIds = Lead::whereIn('id', $ids)->pluck('suggested_offer_id')->merge(DB::table('campaign_lead')->whereIn('lead_id', $ids)->when($campaign, fn ($q) => $q->where('campaign_id', $campaign))->pluck('offer_id'))->merge(Campaign::whereIn('id', $campaignIds)->pluck('offer_id'))
             ->merge(ContactAttempt::whereIn('lead_id', $ids)->when($campaign, fn ($q) => $q->where('campaign_id', $campaign))->pluck('offer_id'))->filter()->unique();
 
         return $query->whereIn('id', $offerIds);

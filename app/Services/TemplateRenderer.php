@@ -23,6 +23,8 @@ class TemplateRenderer
         $variables = ['nombre' => $lead->contact_person ?: $lead->name, 'negocio' => $lead->name,
             'ciudad' => $lead->city ?: $lead->location, 'problema_detectado' => $problem,
             'oferta' => $offer?->name, 'demo' => $offer?->demo_url, 'portfolio' => $offer?->portfolio_url,
+            'beneficios' => $offer?->benefits, 'problemas' => $offer?->pains, 'cliente_objetivo' => $offer?->target_customer,
+            'oferta_detallada' => $offer ? $this->offerDetails($offer) : null,
             'CTA' => $offer?->suggested_cta, 'cta' => $offer?->suggested_cta];
         $missing = [];
         $replace = function (string $text) use ($variables, &$missing): string {
@@ -40,5 +42,24 @@ class TemplateRenderer
         $body = $replace($template->body);
 
         return ['subject' => $subject, 'body' => $body, 'missing' => array_values(array_unique($missing))];
+    }
+
+    /** @return array{subject: string, body: string, missing: list<string>} */
+    public function renderOffer(Lead $lead, ?Offer $offer): array
+    {
+        if (! $offer) {
+            return ['subject' => '', 'body' => '', 'missing' => ['oferta']];
+        }
+
+        $greeting = $lead->contact_person ? 'Hola '.$lead->contact_person.'.' : 'Hola, equipo de '.$lead->name.'.';
+
+        return ['subject' => '', 'body' => $greeting."\n\n".$this->offerDetails($offer), 'missing' => []];
+    }
+
+    private function offerDetails(Offer $offer): string
+    {
+        return implode("\n\n", array_filter([$offer->name, $offer->benefits,
+            $offer->demo_url ? 'Demo: '.$offer->demo_url : null,
+            $offer->portfolio_url ? 'Portfolio: '.$offer->portfolio_url : null, $offer->suggested_cta], fn (?string $value): bool => filled($value)));
     }
 }

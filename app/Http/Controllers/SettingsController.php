@@ -27,7 +27,7 @@ class SettingsController extends Controller
 
     public function exclusions(): mixed
     {
-        return view('sales.exclusions', ['exclusions' => Exclusion::latest()->paginate(100)]);
+        return view('sales.exclusions', ['exclusions' => Exclusion::latest()->orderByDesc('id')->paginate(100)->withQueryString()]);
     }
 
     public function storeExclusion(Request $request, ExclusionService $exclusions): mixed

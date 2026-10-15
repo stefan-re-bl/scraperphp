@@ -25,6 +25,10 @@ class ExclusionService
 
     public function assertContactable(Lead $lead, ?Campaign $campaign = null): void
     {
+        if ($lead->duplicate_status === 'possible_duplicate') {
+            throw ValidationException::withMessages(['lead_id' => 'Resuelve la posible duplicación antes de contactar este prospecto.']);
+        }
+        app(CampaignMembership::class)->assertContactEnabled($lead, $campaign);
         if ($lead->excluded_at || $this->matches($lead->getAttributes())) {
             throw ValidationException::withMessages(['lead_id' => 'Este prospecto está excluido.']);
         }

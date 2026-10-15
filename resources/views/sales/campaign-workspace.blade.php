@@ -3,7 +3,8 @@
 @section('content')
 <div class="page-head"><div><span class="eyebrow"><a href="{{ route('campaigns') }}">Campañas</a> / Contexto comercial</span><h1>{{ $campaign->name }}</h1><p class="muted">{{ $campaign->segment ?: 'General' }} · {{ $campaign->city }} {{ $campaign->country }} · {{ $campaign->offer?->name ?? 'Sin oferta' }}</p><div class="actions" style="margin-top:10px">@include('sales.partials.status-badge',['status'=>$campaign->kill_switch ? 'paused' : $campaign->status])<span class="muted">{{ ['csv_manual'=>'CSV','google_maps'=>'Google Maps','referral'=>'Referidos','web'=>'Web'][$campaign->source] ?? $campaign->source }}</span></div></div><div class="actions"><a class="button" href="{{ route('queue',['campaign'=>$campaign->id]) }}">Abrir cola</a><a class="button light" href="{{ route('campaigns.show',['campaign'=>$campaign->id,'tab'=>'acquisition']) }}">Obtener prospectos</a><button type="button" class="icon-button" data-drawer-open="campaign-edit" aria-label="Editar campaña y seguimientos">@include('sales.partials.icon',['name'=>'edit'])</button><details class="action-menu"><summary aria-label="Más opciones de campaña">@include('sales.partials.icon',['name'=>'more'])</summary><div class="action-menu-list"><a href="{{ route('exports.csv',['dataset'=>'leads','campaign'=>$campaign->id]) }}">Exportar prospectos</a><a href="{{ route('campaigns.show',['campaign'=>$campaign->id,'tab'=>'leads']) }}">Revisar prospectos</a></div></details></div></div>
 @if($campaign->kill_switch)<div class="panel-note">Esta campaña está pausada.<form method="post" action="{{ route('campaigns.resume',$campaign) }}">@csrf<button class="small secondary">Reactivar campaña</button></form></div>@endif
-<section class="campaign-overview"><div class="summary-strip">@foreach(['leads'=>'Prospectos','contacts'=>'Contactados','replies'=>'Respuestas','proposals'=>'Propuestas','won'=>'Ganados'] as $key=>$label)<div class="kpi"><div class="muted">{{ $label }}</div><div class="metric">{{ $stats[$key] }}</div></div>@endforeach</div></section>
+@if($stats)<section class="campaign-overview"><div class="summary-strip">@foreach(['leads'=>'Prospectos','contacts'=>'Contactados','replies'=>'Respuestas','proposals'=>'Propuestas','won'=>'Ganados'] as $key=>$label)<div class="kpi"><div class="muted">{{ $label }}</div><div class="metric">{{ $stats[$key] }}</div></div>@endforeach</div></section>
+@endif
 <div class="tabs">
     @foreach (['summary' => 'Resumen', 'leads' => 'Prospectos', 'acquisition' => 'Adquisición', 'contact' => 'Contacto', 'pipeline' => 'Oportunidades', 'experiments' => 'Experimentos', 'metrics' => 'Métricas'] as $key => $label)
         <a href="/campaigns/{{ $campaign->id }}?tab={{ $key }}" @class(['active' => $tab === $key])>{{ $label }}</a>
@@ -85,16 +86,10 @@
                 <label>Búsqueda<input name="query" value="{{ trim(($campaign->segment ?? '').' '.($campaign->city ?? '').' '.($campaign->country ?? '')) }}" required></label>
                 <label>Ubicación<input name="location" value="{{ $campaign->city }}"></label>
                 <label>Límite<input type="number" name="result_limit" value="{{ $campaign->scrape_limit ?? 50 }}" min="1" max="500"></label>
-                <label>Ejecución
-                    <select name="dry_run">
-                        <option value="1">Simular búsqueda</option>
-                        <option value="0">Ejecutar scraper real</option>
-                    </select>
-                </label>
             </div>
             <button>Obtener prospectos</button>
         </form>
-<p class="muted">La simulación prepara la búsqueda. La búsqueda real se procesa en segundo plano y muestra su progreso automáticamente.</p>
+<p class="muted">La búsqueda se procesa en segundo plano y muestra su progreso automáticamente.</p>
     </section>
     <section>
         <h2>Resultados recientes</h2><a class="button secondary" href="{{ route('imports.create', ['campaign'=>$campaign->id]) }}">Importar CSV con revisión</a>
@@ -111,14 +106,14 @@
                     <td><span class="muted" data-run-field="phase">{{ ['queued'=>'En cola','searching'=>'Buscando','importing'=>'Importando','completed'=>'Completada','failed'=>'Error','cancelled'=>'Cancelada','simulation'=>'Simulación'][$run->phase] ?? $run->phase }}</span>
 @if(in_array($run->status,['queued','running']))<form method="post" action="{{ route('scraper.cancel',$run) }}">@csrf<button class="secondary">Cancelar</button></form>@endif
 @if(in_array($run->status,['failed','cancelled']))<form method="post" action="{{ route('scraper.retry',$run) }}">@csrf<button>Reintentar</button></form>@endif
-@if($run->stderr)<details><summary>Ver error</summary><div>{{ $run->stderr }}</div></details>@endif</td>
+@if($run->stderr)<details><summary>{{ $run->status === 'failed' ? 'Ver error' : 'Ver registro' }}</summary><div>{{ $run->stderr }}</div></details>@endif</td>
                 </tr>
             @empty
                 <tr><td colspan="7"><div class="empty">No hay ejecuciones todavía.</div></td></tr>
             @endforelse
         </table>
     </section>
-    <section><h2>Importaciones</h2>@foreach ($imports as $importRun)<div class="card" @if(in_array($importRun->status,['queued','processing'])) data-run-poll="{{ route('imports.status',$importRun) }}" @endif><span data-run-field="status">{{ ['queued'=>'En cola','processing'=>'Importando','completed'=>'Completada','failed'=>'Error','cancelled'=>'Cancelada'][$importRun->status] ?? $importRun->status }}</span> · Nuevos: <span data-run-field="imported_count">{{ $importRun->imported_count }}</span> · Duplicados: {{ $importRun->duplicate_count }} · Excluidos: {{ $importRun->excluded_count }} · Errores: <span data-run-field="error_count">{{ $importRun->error_count }}</span>
+    <section><h2>Importaciones</h2>@foreach ($imports as $importRun)<div class="card" @if(in_array($importRun->status,['queued','processing'])) data-run-poll="{{ route('imports.status',$importRun) }}" @endif><span data-run-field="status">{{ ['queued'=>'En cola','processing'=>'Importando','completed'=>'Completada','failed'=>'Error','cancelled'=>'Cancelada'][$importRun->status] ?? $importRun->status }}</span> · Nuevos: <span data-run-field="imported_count">{{ $importRun->imported_count }}</span> · Duplicados: {{ $importRun->duplicate_count }} · Excluidos: {{ $importRun->excluded_count }} · Errores: <span data-run-field="error_count">{{ $importRun->error_count }}</span> @if($importRun->error_count)<a href="{{ route('imports.rejections',$importRun) }}">Descargar filas rechazadas</a>@endif
 @if($importRun->error_message)<p>{{ $importRun->error_message }}</p>@endif @if(in_array($importRun->status,['failed','cancelled']))<form method="post" action="{{ route('imports.retry',$importRun) }}">@csrf<button>Reintentar importación</button></form>@endif</div>@endforeach</section>
 @elseif ($tab === 'contact')
     <section>
@@ -167,7 +162,7 @@
                     <td>{{ $experiment->variable }}</td>
                     <td>{{ $experiment->status }}</td>
                     <td>{{ $experiment->variants->pluck('name')->join(', ') }}</td>
-                    <td>{{ $experiment->variants->sum('sent_count') }}</td>
+                    <td>{{ $experiment->variants->sum('real_attempts_count') }}</td>
                 </tr>
             @endforeach
         </table>

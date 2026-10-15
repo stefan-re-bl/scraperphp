@@ -34,7 +34,6 @@
                     <form method="post" action="/scraper/run">
                         @csrf
                         <input type="hidden" name="campaign_query_id" value="{{ $query->id }}">
-                        <input type="hidden" name="dry_run" value="0"><label><input type="checkbox" name="dry_run" value="1" checked> Simular</label>
                         <button>Ejecutar</button>
                     </form>
                 </td>
@@ -49,7 +48,10 @@
     <td>{{ $run->query }}</td><td data-run-field="status">{{ ['queued'=>'En cola','running'=>'En curso','completed'=>'Completada','failed'=>'Error','cancelled'=>'Cancelada','dry_run'=>'Simulación'][$run->status] ?? $run->status }}</td><td data-run-field="phase">{{ $run->phase }}</td><td data-run-field="imported_count">{{ $run->imported_count }}</td><td data-run-field="error_count">{{ $run->error_count }}</td><td>
     @if(in_array($run->status, ['queued','running']))<form method="post" action="{{ route('scraper.cancel', $run) }}">@csrf<button class="secondary">Cancelar</button></form>@endif
     @if(in_array($run->status, ['failed','cancelled']))<form method="post" action="{{ route('scraper.retry', $run) }}">@csrf<button>Reintentar</button></form>@endif
-    @if($run->stderr)<details><summary>Detalle del error</summary><p>{{ $run->stderr }}</p></details>@endif
+    @if($run->stderr)<details><summary>{{ $run->status === 'failed' ? 'Detalle del error' : 'Ver registro' }}</summary><p>{{ $run->stderr }}</p></details>@endif
     </td></tr>@endforeach</table></div>
 </section>
+<section><h2>Importaciones recientes</h2><div class="table-wrap"><table><thead><tr><th>Importación</th><th>Estado</th><th>Procesadas</th><th>Rechazadas</th><th>Resultado</th></tr></thead><tbody>
+@foreach($imports as $import)<tr><td>#{{ $import->id }}</td><td>{{ $import->status }}</td><td>{{ $import->processed_rows }}</td><td>{{ $import->error_count }}</td><td>@if($import->error_count)<a href="{{ route('imports.rejections', $import) }}">Descargar filas rechazadas</a>@endif</td></tr>@endforeach
+</tbody></table></div></section>
 @endsection

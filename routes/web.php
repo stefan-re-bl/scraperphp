@@ -4,6 +4,8 @@ use App\Http\Controllers\AcquisitionController;
 use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\CatalogController;
 use App\Http\Controllers\ContactController;
+use App\Http\Controllers\CrmController;
+use App\Http\Controllers\DuplicateController;
 use App\Http\Controllers\LeadController;
 use App\Http\Controllers\ReportingController;
 use App\Http\Controllers\SalesController;
@@ -27,6 +29,7 @@ Route::post('/imports', [AcquisitionController::class, 'import'])->name('imports
 Route::get('/leads', [LeadController::class, 'leads'])->name('leads');
 Route::post('/leads/bulk', [LeadController::class, 'bulkLeadAction'])->name('leads.bulk');
 Route::get('/leads/{lead}', [LeadController::class, 'leadShow'])->name('leads.show');
+Route::get('/leads/{lead}/whatsapp', [ContactController::class, 'whatsapp'])->name('leads.whatsapp');
 Route::post('/leads/{lead}/status', [LeadController::class, 'updateLeadStatus'])->name('leads.status');
 Route::get('/contact-queue', [ContactController::class, 'queue'])->name('queue');
 Route::post('/contact-attempts', [ContactController::class, 'storeContactAttempt'])->name('contact-attempts.store');
@@ -81,6 +84,8 @@ Route::put('/settings/preferences', [SettingsController::class, 'savePreferences
 Route::post('/lead-views', [LeadController::class, 'saveView'])->name('lead-views.store');
 Route::delete('/lead-views/{savedLeadView}', [LeadController::class, 'deleteView'])->name('lead-views.delete');
 Route::post('/imports/preview', [AcquisitionController::class, 'preview'])->name('imports.preview');
+Route::post('/imports/analyze', [AcquisitionController::class, 'analyzeImport'])->name('imports.analyze');
+Route::get('/imports/{importRun}/rejections', [AcquisitionController::class, 'downloadRejections'])->name('imports.rejections');
 Route::post('/imports/confirm', [AcquisitionController::class, 'confirmImport'])->name('imports.confirm');
 Route::post('/imports/{importRun}/retry', [AcquisitionController::class, 'retryImport'])->name('imports.retry');
 Route::get('/scraper/runs/{scrapeRun}', [AcquisitionController::class, 'status'])->name('scraper.status');
@@ -94,3 +99,13 @@ Route::get('/imports/{importRun}/status', [AcquisitionController::class, 'import
 
 Route::post('/leads/{lead}/restore-contactability', [LeadController::class, 'restoreContactability'])->name('leads.restore-contactability');
 Route::post('/leads/{lead}/campaigns', [LeadController::class, 'attachCampaign'])->name('leads.campaigns.store');
+
+Route::get('/services', [CrmController::class, 'services'])->name('services');
+Route::post('/leads/{lead}/contacts', [CrmController::class, 'storeContact'])->name('leads.contacts.store');
+Route::put('/leads/{lead}/contacts/{contact}', [CrmController::class, 'updateContact'])->name('leads.contacts.update');
+Route::delete('/leads/{lead}/contacts/{contact}', [CrmController::class, 'deleteContact'])->name('leads.contacts.delete');
+Route::post('/leads/{lead}/services', [CrmController::class, 'storeService'])->name('leads.services.store');
+Route::put('/leads/{lead}/services/{service}', [CrmController::class, 'updateService'])->name('leads.services.update');
+Route::delete('/leads/{lead}/services/{service}', [CrmController::class, 'deleteService'])->name('leads.services.delete');
+Route::get('/leads/{lead}/duplicates', [DuplicateController::class, 'review'])->name('leads.duplicates.review');
+Route::post('/duplicates/merge', [DuplicateController::class, 'merge'])->name('duplicates.merge');
